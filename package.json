@@ -20,6 +20,7 @@
     "expo-image-picker": "~55.0.20",
     "expo-linking": "~55.0.15",
     "expo-location": "~55.1.10",
+    "babel-preset-expo": "~55.0.22",
     "expo-router": "~55.0.16",
     "expo-splash-screen": "~55.0.21",
     "expo-status-bar": "~55.0.6",
@@ -43,7 +44,6 @@
   "devDependencies": {
     "@babel/core": "^7.24.0",
     "@types/react": "~19.2.0",
-    "babel-preset-expo": "~55.0.22",
     "typescript": "~5.8.3"
   }
 }
