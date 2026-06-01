@@ -1,0 +1,34 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Student ID images — owner can write once, admin can read
+    match /student-ids/{userId} {
+      allow read:  if request.auth != null
+        && (request.auth.uid == userId
+            || firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true);
+      allow write: if request.auth.uid == userId
+        && request.resource.size < 5 * 1024 * 1024   // max 5 MB
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Listing images — verified sellers can upload to their own folder
+    match /listings/{userId}/{imageId} {
+      allow read:  if true;
+      allow write: if request.auth.uid == userId
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.verificationStatus == 'verified'
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Transfer receipts — buyer can upload their own
+    match /receipts/{userId}/{receiptId} {
+      allow read:  if request.auth != null
+        && (request.auth.uid == userId
+            || firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true);
+      allow write: if request.auth.uid == userId
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+  }
+}

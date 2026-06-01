@@ -2,28 +2,27 @@ import { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, FlatList, KeyboardAvoidingView, Platform, TouchableOpacity } from 'react-native';
 import { Text, TextInput, IconButton, ActivityIndicator } from 'react-native-paper';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import {
-  doc, getDoc, collection, query, orderBy, onSnapshot,
-  addDoc, serverTimestamp, updateDoc, Timestamp,
-} from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
 import { db } from '../../lib/firebase';
-import { useAuthStore } from '../../store/authStore';
+import { sendMessage, subscribeToMessages, acceptOffer } from '../../lib/firestore';
+import { useAuth } from '../../hooks/useAuth';
 import { Chat, Message } from '../../types';
 import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
-import { MESSAGE_TYPES, CHAT_STATUSES } from '../../constants';
+import { MESSAGE_TYPES } from '../../constants';
 import { formatPrice, timeAgo } from '../../lib/utils';
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { user, firebaseUser } = useAuthStore();
+  const { user, firebaseUser } = useAuth();
   const [chat, setChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [showOfferInput, setShowOfferInput] = useState(false);
   const [offerAmount, setOfferAmount] = useState('');
+  const [sending, setSending] = useState(false);
   const flatListRef = useRef<FlatList>(null);
 
   useEffect(() => {
@@ -31,10 +30,7 @@ export default function ChatScreen() {
     getDoc(doc(db, 'chats', id)).then((snap) => {
       if (snap.exists()) setChat({ id: snap.id, ...snap.data() } as Chat);
     });
-
-    const q = query(collection(db, 'chats', id, 'messages'), orderBy('timestamp', 'asc'));
-    const unsub = onSnapshot(q, (snap) => {
-      const msgs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Message));
+    const unsub = subscribeToMessages(id, (msgs) => {
       setMessages(msgs);
       setIsLoading(false);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
@@ -42,63 +38,51 @@ export default function ChatScreen() {
     return unsub;
   }, [id]);
 
-  const sendMessage = async (type: 'text' | 'offer' = 'text', amount?: number) => {
-    if (!firebaseUser || !id || !chat) return;
-    const text = type === 'offer' ? `💰 Offer: ${formatPrice(amount!)}` : inputText.trim();
-    if (!text) return;
+  const isSeller = firebaseUser?.uid === chat?.sellerId;
 
-    const msgData: any = {
+  const handleSendText = async () => {
+    if (!firebaseUser || !id || !inputText.trim()) return;
+    setSending(true);
+    const text = inputText.trim();
+    setInputText('');
+    await sendMessage(id, {
       chatId: id,
       senderId: firebaseUser.uid,
       senderName: user?.name || 'User',
       text,
       timestamp: new Date().toISOString(),
-      type,
-    };
-    if (type === 'offer' && amount) {
-      msgData.offerAmount = amount;
-      msgData.offerStatus = 'pending';
-    }
-
-    await addDoc(collection(db, 'chats', id, 'messages'), msgData);
-    await updateDoc(doc(db, 'chats', id), {
-      lastMessage: text,
-      lastMessageTime: new Date().toISOString(),
+      type: MESSAGE_TYPES.TEXT,
     });
-
-    setInputText('');
-    setShowOfferInput(false);
-    setOfferAmount('');
+    setSending(false);
   };
 
-  const sendOffer = async () => {
+  const handleSendOffer = async () => {
     const amount = parseFloat(offerAmount);
     if (isNaN(amount) || amount <= 0) {
-      Toast.show({ type: 'error', text1: 'Invalid amount', text2: 'Enter a valid offer price.' });
+      Toast.show({ type: 'error', text1: 'Invalid amount', text2: 'Enter a positive price.' });
       return;
     }
-    await sendMessage('offer', amount);
+    setSending(true);
+    await sendMessage(id!, {
+      chatId: id!,
+      senderId: firebaseUser!.uid,
+      senderName: user?.name || 'User',
+      text: `💰 Offer: ${formatPrice(amount)}`,
+      timestamp: new Date().toISOString(),
+      type: MESSAGE_TYPES.OFFER,
+      offerAmount: amount,
+      offerStatus: 'pending',
+    });
+    setOfferAmount('');
+    setShowOfferInput(false);
+    setSending(false);
   };
 
-  const acceptOffer = async (msg: Message) => {
-    if (!id || !msg.offerAmount) return;
-    await updateDoc(doc(db, 'chats', id), { status: CHAT_STATUSES.OFFER_ACCEPTED, currentOffer: msg.offerAmount });
-    await addDoc(collection(db, 'chats', id, 'messages'), {
-      chatId: id,
-      senderId: 'system',
-      senderName: 'System',
-      text: `✅ Offer of ${formatPrice(msg.offerAmount)} accepted! Proceed to checkout.`,
-      timestamp: new Date().toISOString(),
-      type: MESSAGE_TYPES.SYSTEM,
-    });
-    await updateDoc(doc(db, 'chats', id), {
-      lastMessage: `Offer of ${formatPrice(msg.offerAmount)} accepted`,
-      lastMessageTime: new Date().toISOString(),
-    });
+  const handleAcceptOffer = async (msg: Message) => {
+    if (!id || !msg.offerAmount || !user) return;
+    await acceptOffer(id, msg.offerAmount, user.id, user.name);
     Toast.show({ type: 'success', text1: 'Offer Accepted!', text2: 'Buyer can now proceed to checkout.' });
   };
-
-  const isSeller = firebaseUser?.uid === chat?.sellerId;
 
   if (isLoading) {
     return <View style={styles.centered}><ActivityIndicator size="large" color={Colors.primary} /></View>;
@@ -111,6 +95,14 @@ export default function ChatScreen() {
           title: chat?.listingTitle || 'Chat',
           headerStyle: { backgroundColor: Colors.primary },
           headerTintColor: Colors.textOnPrimary,
+          headerRight: chat?.status === 'offer_accepted' && !isSeller ? () => (
+            <TouchableOpacity
+              onPress={() => router.push(`/checkout/${chat.listingId}`)}
+              style={styles.checkoutHeaderBtn}
+            >
+              <Text style={styles.checkoutHeaderText}>Checkout →</Text>
+            </TouchableOpacity>
+          ) : undefined,
         }}
       />
       <KeyboardAvoidingView
@@ -118,19 +110,22 @@ export default function ChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={90}
       >
-        {chat?.status === CHAT_STATUSES.OFFER_ACCEPTED && (
-          <View style={styles.offerAcceptedBanner}>
-            <Text style={styles.offerAcceptedText}>
-              ✅ Offer accepted — {!isSeller ? 'proceed to' : 'waiting for buyer to complete'} checkout
+        {/* Offer accepted banner */}
+        {chat?.status === 'offer_accepted' && (
+          <View style={styles.offerBanner}>
+            <Text style={styles.offerBannerText}>
+              ✅ Offer of {formatPrice(chat.currentOffer ?? 0)} accepted
+              {isSeller ? ' — waiting for buyer to pay' : ''}
             </Text>
             {!isSeller && (
               <TouchableOpacity onPress={() => router.push(`/checkout/${chat.listingId}`)}>
-                <Text style={styles.checkoutLink}>Go to Checkout →</Text>
+                <Text style={styles.offerBannerLink}>Pay now →</Text>
               </TouchableOpacity>
             )}
           </View>
         )}
 
+        {/* Message list */}
         <FlatList
           ref={flatListRef}
           data={messages}
@@ -141,13 +136,14 @@ export default function ChatScreen() {
               message={item}
               isMe={item.senderId === firebaseUser?.uid}
               isSeller={isSeller}
-              onAcceptOffer={() => acceptOffer(item)}
+              onAcceptOffer={() => handleAcceptOffer(item)}
             />
           )}
         />
 
+        {/* Input bar */}
         {showOfferInput ? (
-          <View style={styles.offerInputBar}>
+          <View style={styles.inputBar}>
             <TextInput
               label="Your offer (₦)"
               value={offerAmount}
@@ -156,15 +152,16 @@ export default function ChatScreen() {
               mode="outlined"
               style={styles.offerInput}
               dense
+              left={<TextInput.Affix text="₦" />}
             />
-            <IconButton icon="send" onPress={sendOffer} iconColor={Colors.primary} />
+            <IconButton icon="send" onPress={handleSendOffer} iconColor={Colors.primary} disabled={sending} />
             <IconButton icon="close" onPress={() => setShowOfferInput(false)} iconColor={Colors.error} />
           </View>
         ) : (
           <View style={styles.inputBar}>
-            {!isSeller && (
+            {!isSeller && chat?.status !== 'offer_accepted' && (
               <IconButton
-                icon="tag"
+                icon="tag-outline"
                 onPress={() => setShowOfferInput(true)}
                 iconColor={Colors.accent}
                 style={styles.offerBtn}
@@ -175,15 +172,16 @@ export default function ChatScreen() {
               onChangeText={setInputText}
               placeholder="Type a message..."
               mode="outlined"
-              style={styles.input}
+              style={styles.textInput}
               dense
-              onSubmitEditing={() => sendMessage()}
+              onSubmitEditing={handleSendText}
+              returnKeyType="send"
             />
             <IconButton
               icon="send"
-              onPress={() => sendMessage()}
+              onPress={handleSendText}
               iconColor={Colors.primary}
-              disabled={!inputText.trim()}
+              disabled={!inputText.trim() || sending}
             />
           </View>
         )}
@@ -193,10 +191,7 @@ export default function ChatScreen() {
 }
 
 function MessageBubble({
-  message,
-  isMe,
-  isSeller,
-  onAcceptOffer,
+  message, isMe, isSeller, onAcceptOffer,
 }: {
   message: Message;
   isMe: boolean;
@@ -215,17 +210,22 @@ function MessageBubble({
 
   return (
     <View style={[styles.bubbleWrapper, isMe ? styles.bubbleRight : styles.bubbleLeft]}>
+      {!isMe && <Text style={styles.senderName}>{message.senderName}</Text>}
       <View style={[
         styles.bubble,
         isMe ? styles.bubbleMine : styles.bubbleTheirs,
         isOffer && styles.bubbleOffer,
       ]}>
-        {!isMe && <Text style={styles.senderName}>{message.senderName}</Text>}
-        <Text style={[styles.bubbleText, isMe && styles.bubbleTextMine]}>{message.text}</Text>
+        <Text style={[styles.bubbleText, isMe && styles.bubbleTextMine]}>
+          {message.text}
+        </Text>
         {isOffer && isSeller && message.offerStatus === 'pending' && (
           <TouchableOpacity onPress={onAcceptOffer} style={styles.acceptBtn}>
             <Text style={styles.acceptBtnText}>✓ Accept Offer</Text>
           </TouchableOpacity>
+        )}
+        {isOffer && message.offerStatus === 'accepted' && (
+          <Text style={styles.acceptedLabel}>✓ Accepted</Text>
         )}
         <Text style={[styles.timestamp, isMe && styles.timestampMine]}>
           {timeAgo(message.timestamp)}
@@ -238,35 +238,63 @@ function MessageBubble({
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  offerAcceptedBanner: {
+  checkoutHeaderBtn: { paddingHorizontal: Spacing.sm },
+  checkoutHeaderText: { color: Colors.accent, fontWeight: 'bold', fontSize: FontSize.sm },
+  offerBanner: {
     backgroundColor: '#E8F5E9',
     padding: Spacing.md,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: Colors.success + '44',
-    gap: 4,
+    borderBottomColor: Colors.success + '33',
   },
-  offerAcceptedText: { fontSize: FontSize.sm, color: Colors.success, fontWeight: '600' },
-  checkoutLink: { fontSize: FontSize.sm, color: Colors.primary, fontWeight: 'bold', textDecorationLine: 'underline' },
+  offerBannerText: { fontSize: FontSize.sm, color: Colors.success, fontWeight: '600', flex: 1 },
+  offerBannerLink: { fontSize: FontSize.sm, color: Colors.primary, fontWeight: 'bold', marginLeft: Spacing.sm },
   messageList: { padding: Spacing.md, gap: Spacing.sm, paddingBottom: Spacing.lg },
-  systemMsg: { alignSelf: 'center', backgroundColor: '#F0F0F0', borderRadius: BorderRadius.md, paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs },
-  systemMsgText: { fontSize: FontSize.sm, color: Colors.textSecondary, fontStyle: 'italic' },
-  bubbleWrapper: { maxWidth: '80%' },
+  systemMsg: {
+    alignSelf: 'center',
+    backgroundColor: '#F0F0F0',
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    marginVertical: Spacing.xs,
+    maxWidth: '85%',
+  },
+  systemMsgText: { fontSize: FontSize.xs, color: Colors.textSecondary, fontStyle: 'italic', textAlign: 'center' },
+  bubbleWrapper: { maxWidth: '80%', marginBottom: Spacing.xs },
   bubbleLeft: { alignSelf: 'flex-start' },
   bubbleRight: { alignSelf: 'flex-end' },
-  bubble: { borderRadius: BorderRadius.lg, padding: Spacing.md, gap: 4 },
+  senderName: { fontSize: FontSize.xs, color: Colors.textSecondary, marginBottom: 2, marginLeft: Spacing.xs },
+  bubble: {
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    gap: 4,
+  },
   bubbleMine: { backgroundColor: Colors.primary, borderBottomRightRadius: BorderRadius.xs },
   bubbleTheirs: { backgroundColor: Colors.surface, borderBottomLeftRadius: BorderRadius.xs },
   bubbleOffer: { borderWidth: 2, borderColor: Colors.accent },
-  senderName: { fontSize: FontSize.xs, color: Colors.textSecondary, fontWeight: '600' },
-  bubbleText: { fontSize: FontSize.md, color: Colors.text },
+  bubbleText: { fontSize: FontSize.md, color: Colors.text, lineHeight: 20 },
   bubbleTextMine: { color: Colors.textOnPrimary },
-  acceptBtn: { backgroundColor: Colors.success, borderRadius: BorderRadius.sm, padding: Spacing.sm, alignItems: 'center', marginTop: Spacing.xs },
+  acceptBtn: {
+    backgroundColor: Colors.success,
+    borderRadius: BorderRadius.sm,
+    padding: Spacing.sm,
+    alignItems: 'center',
+    marginTop: Spacing.xs,
+  },
   acceptBtnText: { color: '#fff', fontWeight: 'bold', fontSize: FontSize.sm },
-  timestamp: { fontSize: 10, color: Colors.textSecondary, alignSelf: 'flex-end' },
+  acceptedLabel: { fontSize: FontSize.xs, color: Colors.success, fontWeight: 'bold', marginTop: 4 },
+  timestamp: { fontSize: 10, color: Colors.textSecondary, alignSelf: 'flex-end', marginTop: 2 },
   timestampMine: { color: 'rgba(255,255,255,0.6)' },
-  inputBar: { flexDirection: 'row', alignItems: 'center', padding: Spacing.sm, backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border },
+  inputBar: {
+    flexDirection: 'row', alignItems: 'center',
+    padding: Spacing.sm,
+    backgroundColor: Colors.surface,
+    borderTopWidth: 1, borderTopColor: Colors.border,
+    gap: 2,
+  },
   offerBtn: { margin: 0 },
-  input: { flex: 1, backgroundColor: Colors.background, fontSize: FontSize.md },
-  offerInputBar: { flexDirection: 'row', alignItems: 'center', padding: Spacing.sm, backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border },
+  textInput: { flex: 1, backgroundColor: Colors.background },
   offerInput: { flex: 1, backgroundColor: Colors.background },
 });

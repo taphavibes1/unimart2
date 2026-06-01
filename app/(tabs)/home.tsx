@@ -5,9 +5,8 @@ import {
 } from 'react-native';
 import { Text, Searchbar, Chip, ActivityIndicator } from 'react-native-paper';
 import { useRouter } from 'expo-router';
-import { collection, query, where, orderBy, onSnapshot, limit } from 'firebase/firestore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { db } from '../../lib/firebase';
+import { subscribeToAvailableListings } from '../../lib/firestore';
 import { useAuthStore } from '../../store/authStore';
 import { useListingStore } from '../../store/listingStore';
 import { Listing } from '../../types';
@@ -19,42 +18,41 @@ import VerificationBanner from '../../components/ui/VerificationBanner';
 export default function HomeScreen() {
   const router = useRouter();
   const { user, refreshUser } = useAuthStore();
-  const { listings, setListings, selectedCategory, setSelectedCategory, searchQuery, setSearchQuery, isLoading, setLoading } = useListingStore();
+  const {
+    listings, setListings,
+    selectedCategory, setSelectedCategory,
+    searchQuery, setSearchQuery,
+    isLoading, setLoading,
+  } = useListingStore();
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     setLoading(true);
-    const q = query(
-      collection(db, 'listings'),
-      where('status', '==', LISTING_STATUSES.AVAILABLE),
-      orderBy('createdAt', 'desc'),
-      limit(50)
-    );
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Listing));
+    const unsub = subscribeToAvailableListings((data) => {
       setListings(data);
       setLoading(false);
-    }, (err) => {
-      console.error('Listings error:', err);
-      setLoading(false);
     });
-    return unsubscribe;
+    return unsub;
   }, []);
 
   const filtered = listings.filter((l) => {
     const matchCat = !selectedCategory || l.category === selectedCategory;
-    const matchSearch = !searchQuery || l.title.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchSearch =
+      !searchQuery ||
+      l.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      l.description?.toLowerCase().includes(searchQuery.toLowerCase());
     return matchCat && matchSearch;
   });
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await refreshUser(); // re-check verification status on pull-to-refresh
+    await refreshUser();
     setRefreshing(false);
   }, [refreshUser]);
 
   return (
     <View style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View>
@@ -63,19 +61,16 @@ export default function HomeScreen() {
               {user ? `Hi, ${user.name.split(' ')[0]}! 👋` : 'Browse listings'}
             </Text>
           </View>
-          <View style={styles.headerActions}>
-            {user && (
-              <TouchableOpacity
-                onPress={() => router.push('/create-listing')}
-                style={styles.sellButton}
-              >
-                <MaterialCommunityIcons name="plus" size={18} color={Colors.text} />
-                <Text style={styles.sellButtonText}>Sell</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          {user && (
+            <TouchableOpacity
+              onPress={() => router.push('/create-listing')}
+              style={styles.sellButton}
+            >
+              <MaterialCommunityIcons name="plus" size={18} color={Colors.text} />
+              <Text style={styles.sellButtonText}>Sell</Text>
+            </TouchableOpacity>
+          )}
         </View>
-
         <Searchbar
           placeholder="Search listings..."
           value={searchQuery}
@@ -87,6 +82,7 @@ export default function HomeScreen() {
 
       <VerificationBanner />
 
+      {/* Category chips */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -115,6 +111,7 @@ export default function HomeScreen() {
         ))}
       </ScrollView>
 
+      {/* Listing grid */}
       {isLoading ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={Colors.primary} />
@@ -176,9 +173,7 @@ function ListingCard({ listing, router }: { listing: Listing; router: any }) {
         <Text style={styles.cardTitle} numberOfLines={2}>{listing.title}</Text>
         <Text style={styles.cardPrice}>{formatPrice(listing.price)}</Text>
         <View style={styles.cardMeta}>
-          <Text style={styles.cardSeller} numberOfLines={1}>
-            {listing.sellerName}
-          </Text>
+          <Text style={styles.cardSeller} numberOfLines={1}>{listing.sellerName}</Text>
           <Text style={styles.cardTime}>{timeAgo(listing.createdAt)}</Text>
         </View>
       </View>
@@ -194,24 +189,25 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.xl + Spacing.md,
     paddingBottom: Spacing.lg,
   },
-  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: Spacing.md },
+  headerTop: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'flex-start', marginBottom: Spacing.md,
+  },
   appName: { fontSize: FontSize.xxl, fontWeight: 'bold', color: Colors.accent },
   greeting: { fontSize: FontSize.sm, color: 'rgba(255,255,255,0.8)' },
-  headerActions: { flexDirection: 'row', gap: Spacing.sm },
   sellButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'row', alignItems: 'center',
     backgroundColor: Colors.accent,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.round,
-    gap: 4,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.round, gap: 4,
   },
   sellButtonText: { fontSize: FontSize.sm, fontWeight: 'bold', color: Colors.text },
   searchbar: { borderRadius: BorderRadius.lg, backgroundColor: Colors.surface },
   searchInput: { fontSize: FontSize.md },
   categoryScroll: { flexGrow: 0 },
-  categoryContainer: { padding: Spacing.sm, gap: Spacing.sm, paddingVertical: Spacing.md },
+  categoryContainer: {
+    padding: Spacing.sm, gap: Spacing.sm, paddingVertical: Spacing.md,
+  },
   chip: { backgroundColor: Colors.surface },
   chipSelected: { backgroundColor: Colors.primary },
   chipText: { fontSize: FontSize.sm, color: Colors.text },
@@ -224,26 +220,21 @@ const styles = StyleSheet.create({
   listContent: { padding: Spacing.sm, paddingBottom: Spacing.xxl },
   row: { justifyContent: 'space-between', paddingHorizontal: Spacing.xs },
   card: {
-    width: '48%',
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.lg,
-    marginBottom: Spacing.md,
-    overflow: 'hidden',
-    ...Shadow.small,
+    width: '48%', backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg, marginBottom: Spacing.md,
+    overflow: 'hidden', ...Shadow.small,
   },
   cardImageContainer: { position: 'relative' },
   cardImage: { width: '100%', height: 130, resizeMode: 'cover' },
   cardImagePlaceholder: {
     width: '100%', height: 130,
-    backgroundColor: Colors.border,
-    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center',
   },
   placeholderEmoji: { fontSize: 36 },
   statusBadge: {
     position: 'absolute', top: 6, right: 6,
     paddingHorizontal: 8, paddingVertical: 3,
-    borderRadius: BorderRadius.round,
-    backgroundColor: Colors.statusReserved,
+    borderRadius: BorderRadius.round, backgroundColor: Colors.statusReserved,
   },
   statusReserved: { backgroundColor: Colors.statusReserved },
   statusSold: { backgroundColor: Colors.statusSold },

@@ -2,10 +2,9 @@ import { useEffect, useState } from 'react';
 import { View, StyleSheet, FlatList, TouchableOpacity, Image } from 'react-native';
 import { Text, Chip, ActivityIndicator, Button } from 'react-native-paper';
 import { useRouter, Stack } from 'expo-router';
-import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
-import { db } from '../lib/firebase';
-import { useAuthStore } from '../store/authStore';
+import { subscribeToSellerListings, updateListingStatus } from '../lib/firestore';
+import { useAuth } from '../hooks/useAuth';
 import { Listing } from '../types';
 import { Colors, Spacing, FontSize, BorderRadius, Shadow } from '../constants/theme';
 import { LISTING_STATUSES } from '../constants';
@@ -13,38 +12,28 @@ import { formatPrice, timeAgo } from '../lib/utils';
 
 export default function MyListingsScreen() {
   const router = useRouter();
-  const { firebaseUser } = useAuthStore();
+  const { firebaseUser } = useAuth();
   const [listings, setListings] = useState<Listing[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     if (!firebaseUser) return;
-    const q = query(collection(db, 'listings'), where('sellerId', '==', firebaseUser.uid));
-    return onSnapshot(q, (snap) => {
-      setListings(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Listing)));
+    return subscribeToSellerListings(firebaseUser.uid, (data) => {
+      setListings(data);
       setIsLoading(false);
     });
   }, [firebaseUser]);
 
-  const markSold = async (id: string) => {
-    await updateDoc(doc(db, 'listings', id), { status: LISTING_STATUSES.SOLD });
-    Toast.show({ type: 'success', text1: 'Marked as Sold' });
-  };
-
-  const markAvailable = async (id: string) => {
-    await updateDoc(doc(db, 'listings', id), { status: LISTING_STATUSES.AVAILABLE });
-    Toast.show({ type: 'success', text1: 'Listing Restored' });
-  };
-
-  const statusColor = (status: string) => ({
-    available: Colors.statusAvailable,
-    reserved: Colors.statusReserved,
-    sold: Colors.statusSold,
-  }[status] || Colors.textSecondary);
+  const statusColor = (s: string) =>
+    ({ available: Colors.statusAvailable, reserved: Colors.statusReserved, sold: Colors.statusSold }[s] || Colors.textSecondary);
 
   return (
     <>
-      <Stack.Screen options={{ title: 'My Listings', headerStyle: { backgroundColor: Colors.primary }, headerTintColor: Colors.textOnPrimary }} />
+      <Stack.Screen options={{
+        title: 'My Listings',
+        headerStyle: { backgroundColor: Colors.primary },
+        headerTintColor: Colors.textOnPrimary,
+      }} />
       <View style={styles.container}>
         {isLoading ? (
           <View style={styles.centered}><ActivityIndicator size="large" color={Colors.primary} /></View>
@@ -65,12 +54,13 @@ export default function MyListingsScreen() {
               <TouchableOpacity
                 style={styles.card}
                 onPress={() => router.push(`/listing/${item.id}`)}
+                activeOpacity={0.85}
               >
-                <View style={styles.cardLeft}>
+                <View style={styles.thumb}>
                   {item.imageUrls?.[0] ? (
-                    <Image source={{ uri: item.imageUrls[0] }} style={styles.thumb} />
+                    <Image source={{ uri: item.imageUrls[0] }} style={styles.thumbImg} />
                   ) : (
-                    <View style={[styles.thumb, styles.thumbPlaceholder]}>
+                    <View style={styles.thumbPlaceholder}>
                       <Text style={styles.thumbEmoji}>📦</Text>
                     </View>
                   )}
@@ -81,8 +71,8 @@ export default function MyListingsScreen() {
                   <View style={styles.cardMeta}>
                     <Chip
                       compact
-                      style={[styles.statusChip, { backgroundColor: statusColor(item.status) + '22' }]}
-                      textStyle={[styles.statusText, { color: statusColor(item.status) }]}
+                      style={{ backgroundColor: statusColor(item.status) + '22', height: 24 }}
+                      textStyle={{ color: statusColor(item.status), fontSize: 11, fontWeight: 'bold' }}
                     >
                       {item.status}
                     </Chip>
@@ -90,12 +80,24 @@ export default function MyListingsScreen() {
                   </View>
                   <View style={styles.actions}>
                     {item.status !== LISTING_STATUSES.SOLD && (
-                      <Button compact textColor={Colors.error} onPress={() => markSold(item.id)}>
+                      <Button
+                        compact mode="text" textColor={Colors.error}
+                        onPress={async () => {
+                          await updateListingStatus(item.id, LISTING_STATUSES.SOLD);
+                          Toast.show({ type: 'success', text1: 'Marked as Sold' });
+                        }}
+                      >
                         Mark Sold
                       </Button>
                     )}
                     {item.status === LISTING_STATUSES.SOLD && (
-                      <Button compact textColor={Colors.primary} onPress={() => markAvailable(item.id)}>
+                      <Button
+                        compact mode="text" textColor={Colors.primary}
+                        onPress={async () => {
+                          await updateListingStatus(item.id, LISTING_STATUSES.AVAILABLE);
+                          Toast.show({ type: 'success', text1: 'Relisted!' });
+                        }}
+                      >
                         Relist
                       </Button>
                     )}
@@ -116,17 +118,18 @@ const styles = StyleSheet.create({
   emptyEmoji: { fontSize: 56, marginBottom: Spacing.md },
   emptyTitle: { fontSize: FontSize.xl, fontWeight: 'bold', color: Colors.text, marginBottom: Spacing.md },
   list: { padding: Spacing.md, gap: Spacing.md },
-  card: { flexDirection: 'row', backgroundColor: Colors.surface, borderRadius: BorderRadius.lg, overflow: 'hidden', ...Shadow.small },
-  cardLeft: {},
-  thumb: { width: 90, height: 90, resizeMode: 'cover' },
-  thumbPlaceholder: { backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
+  card: {
+    flexDirection: 'row', backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg, overflow: 'hidden', ...Shadow.small,
+  },
+  thumb: { width: 90 },
+  thumbImg: { width: 90, height: 90, resizeMode: 'cover' },
+  thumbPlaceholder: { width: 90, height: 90, backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
   thumbEmoji: { fontSize: 28 },
   cardBody: { flex: 1, padding: Spacing.sm, gap: 4 },
   cardTitle: { fontSize: FontSize.sm, fontWeight: '600', color: Colors.text },
   cardPrice: { fontSize: FontSize.lg, fontWeight: 'bold', color: Colors.primary },
   cardMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  statusChip: { height: 24 },
-  statusText: { fontSize: 10, fontWeight: 'bold' },
   cardTime: { fontSize: FontSize.xs, color: Colors.placeholder },
-  actions: { flexDirection: 'row' },
+  actions: { flexDirection: 'row', marginTop: -4 },
 });

@@ -2,58 +2,25 @@ import { useEffect, useState } from 'react';
 import { View, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { Text, ActivityIndicator, Avatar } from 'react-native-paper';
 import { useRouter } from 'expo-router';
-import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { subscribeToUserChats } from '../../lib/firestore';
 import { useAuthStore } from '../../store/authStore';
 import { Chat } from '../../types';
-import { Colors, Spacing, FontSize, BorderRadius, Shadow } from '../../constants/theme';
+import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
 import { timeAgo } from '../../lib/utils';
 
 export default function ChatsScreen() {
   const router = useRouter();
-  const { user, firebaseUser } = useAuthStore();
+  const { firebaseUser } = useAuthStore();
   const [chats, setChats] = useState<Chat[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     if (!firebaseUser) { setIsLoading(false); return; }
-
-    const buyerQ = query(
-      collection(db, 'chats'),
-      where('buyerId', '==', firebaseUser.uid),
-      orderBy('lastMessageTime', 'desc')
-    );
-    const sellerQ = query(
-      collection(db, 'chats'),
-      where('sellerId', '==', firebaseUser.uid),
-      orderBy('lastMessageTime', 'desc')
-    );
-
-    const allChats = new Map<string, Chat>();
-    let loaded = 0;
-
-    const merge = () => {
-      const sorted = Array.from(allChats.values()).sort(
-        (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
-      );
-      setChats(sorted);
-    };
-
-    const unsub1 = onSnapshot(buyerQ, (snap) => {
-      snap.docs.forEach((d) => allChats.set(d.id, { id: d.id, ...d.data() } as Chat));
-      loaded++;
-      if (loaded >= 2) setIsLoading(false);
-      merge();
+    const unsub = subscribeToUserChats(firebaseUser.uid, (data) => {
+      setChats(data);
+      setIsLoading(false);
     });
-
-    const unsub2 = onSnapshot(sellerQ, (snap) => {
-      snap.docs.forEach((d) => allChats.set(d.id, { id: d.id, ...d.data() } as Chat));
-      loaded++;
-      if (loaded >= 2) setIsLoading(false);
-      merge();
-    });
-
-    return () => { unsub1(); unsub2(); };
+    return unsub;
   }, [firebaseUser]);
 
   if (!firebaseUser) {
@@ -70,7 +37,9 @@ export default function ChatsScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Messages</Text>
-        <Text style={styles.headerSubtitle}>{chats.length} conversation{chats.length !== 1 ? 's' : ''}</Text>
+        <Text style={styles.headerSubtitle}>
+          {chats.length} conversation{chats.length !== 1 ? 's' : ''}
+        </Text>
       </View>
 
       {isLoading ? (
@@ -81,7 +50,9 @@ export default function ChatsScreen() {
         <View style={styles.centered}>
           <Text style={styles.emptyEmoji}>💬</Text>
           <Text style={styles.emptyTitle}>No conversations yet</Text>
-          <Text style={styles.emptySubtitle}>Start chatting by tapping "Message Seller" on any listing</Text>
+          <Text style={styles.emptySubtitle}>
+            Tap "Message Seller" on any listing to start chatting
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -101,13 +72,9 @@ export default function ChatsScreen() {
 }
 
 function ChatListItem({
-  chat,
-  currentUserId,
-  onPress,
+  chat, currentUserId, onPress,
 }: {
-  chat: Chat;
-  currentUserId: string;
-  onPress: () => void;
+  chat: Chat; currentUserId: string; onPress: () => void;
 }) {
   const isBuyer = chat.buyerId === currentUserId;
   const otherName = isBuyer ? chat.sellerName : chat.buyerName;
@@ -126,12 +93,8 @@ function ChatListItem({
           <Text style={styles.chatName} numberOfLines={1}>{otherName}</Text>
           <Text style={styles.chatTime}>{timeAgo(chat.lastMessageTime)}</Text>
         </View>
-        <Text style={styles.chatListing} numberOfLines={1}>
-          re: {chat.listingTitle}
-        </Text>
-        <Text style={styles.chatLastMessage} numberOfLines={1}>
-          {chat.lastMessage}
-        </Text>
+        <Text style={styles.chatListing} numberOfLines={1}>re: {chat.listingTitle}</Text>
+        <Text style={styles.chatLastMessage} numberOfLines={1}>{chat.lastMessage}</Text>
         {chat.status === 'offer_accepted' && (
           <View style={styles.offerBadge}>
             <Text style={styles.offerBadgeText}>✓ Offer Accepted</Text>
@@ -152,7 +115,10 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: FontSize.xxl, fontWeight: 'bold', color: Colors.textOnPrimary },
   headerSubtitle: { fontSize: FontSize.sm, color: 'rgba(255,255,255,0.7)' },
-  authContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xl },
+  authContainer: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    padding: Spacing.xl, backgroundColor: Colors.background,
+  },
   authEmoji: { fontSize: 56, marginBottom: Spacing.md },
   authTitle: { fontSize: FontSize.xl, fontWeight: 'bold', color: Colors.text, marginBottom: Spacing.sm },
   authSubtitle: { fontSize: FontSize.md, color: Colors.textSecondary, textAlign: 'center' },
@@ -161,12 +127,10 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: FontSize.xl, fontWeight: 'bold', color: Colors.text, marginBottom: Spacing.sm },
   emptySubtitle: { fontSize: FontSize.md, color: Colors.textSecondary, textAlign: 'center' },
   chatItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'row', alignItems: 'center',
     backgroundColor: Colors.surface,
     padding: Spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
     gap: Spacing.md,
   },
   avatar: { backgroundColor: Colors.primaryLight },
@@ -178,11 +142,9 @@ const styles = StyleSheet.create({
   chatListing: { fontSize: FontSize.xs, color: Colors.primary, marginBottom: 2 },
   chatLastMessage: { fontSize: FontSize.sm, color: Colors.textSecondary },
   offerBadge: {
-    alignSelf: 'flex-start',
-    marginTop: 4,
+    alignSelf: 'flex-start', marginTop: 4,
     backgroundColor: '#E8F5E9',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingHorizontal: 8, paddingVertical: 2,
     borderRadius: BorderRadius.round,
   },
   offerBadgeText: { fontSize: FontSize.xs, color: Colors.success, fontWeight: 'bold' },

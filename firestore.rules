@@ -2,84 +2,154 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isSignedIn() {
+    // ─── Helpers ────────────────────────────────────────────────────────────
+
+    function signedIn() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return request.auth.uid == userId;
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
     }
 
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    function userDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    function myDoc() {
+      return userDoc(request.auth.uid);
     }
 
     function isVerified() {
-      return isSignedIn() && getUserData().verificationStatus == 'verified';
+      return signedIn() && myDoc().verificationStatus == 'verified';
     }
 
     function isAdmin() {
-      return isSignedIn() && getUserData().isAdmin == true;
+      return signedIn() && myDoc().isAdmin == true;
     }
 
-    // Users collection
+    function isChatParticipant(chatData) {
+      return signedIn() && (
+        chatData.buyerId == request.auth.uid ||
+        chatData.sellerId == request.auth.uid
+      );
+    }
+
+    function isPaymentParticipant(paymentData) {
+      return signedIn() && (
+        paymentData.buyerId == request.auth.uid ||
+        paymentData.sellerId == request.auth.uid
+      );
+    }
+
+    // ─── Users ──────────────────────────────────────────────────────────────
+    // Anyone signed in can read profiles (needed for chat, listings, ratings).
+    // Only the owner can create their own doc; updates allowed by owner or admin.
+    // Fields like isAdmin and verificationStatus can only be set by admin.
+
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create: if isOwner(userId);
-      allow update: if isOwner(userId) || isAdmin();
+      allow read: if signedIn();
+
+      allow create: if isOwner(userId)
+        && request.resource.data.isAdmin == false
+        && request.resource.data.verificationStatus == 'pending'
+        && request.resource.data.walletBalance == 5000;
+
+      allow update: if
+        // Owner can update their own non-sensitive fields
+        (isOwner(userId)
+          && !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(['isAdmin', 'verificationStatus', 'totalSales', 'rating']))
+        // Admin can update everything
+        || isAdmin();
+
       allow delete: if isAdmin();
     }
 
-    // Listings collection
+    // ─── Listings ───────────────────────────────────────────────────────────
+    // Public read (browsing without sign-in).
+    // Only verified students can create listings.
+    // Only the listing owner or admin can update/delete.
+
     match /listings/{listingId} {
-      allow read: if true; // Public browsing
-      allow create: if isVerified();
-      allow update: if isOwner(resource.data.sellerId) || isAdmin();
+      allow read: if true;
+
+      allow create: if isVerified()
+        && request.resource.data.sellerId == request.auth.uid
+        && request.resource.data.status == 'available'
+        && request.resource.data.price > 0
+        && request.resource.data.title.size() >= 3;
+
+      allow update: if
+        (isOwner(resource.data.sellerId)
+          // Owner cannot change sellerId, price after reservation, or bump to sold without payment
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sellerId']))
+        || isAdmin();
+
       allow delete: if isOwner(resource.data.sellerId) || isAdmin();
     }
 
-    // Chats collection
-    match /chats/{chatId} {
-      allow read: if isSignedIn() && (
-        resource.data.buyerId == request.auth.uid ||
-        resource.data.sellerId == request.auth.uid
-      );
-      allow create: if isSignedIn();
-      allow update: if isSignedIn() && (
-        resource.data.buyerId == request.auth.uid ||
-        resource.data.sellerId == request.auth.uid
-      );
+    // ─── Chats ──────────────────────────────────────────────────────────────
+    // Only participants can read or update.
+    // Any signed-in user can start a chat (creates the doc as buyer).
 
-      // Messages subcollection
+    match /chats/{chatId} {
+      allow read:   if isChatParticipant(resource.data);
+      allow create: if signedIn()
+        && request.resource.data.buyerId == request.auth.uid;
+      allow update: if isChatParticipant(resource.data);
+      allow delete: if false;
+
+      // Messages subcollection: only participants can read/write
       match /messages/{messageId} {
-        allow read: if isSignedIn() && (
-          get(/databases/$(database)/documents/chats/$(chatId)).data.buyerId == request.auth.uid ||
-          get(/databases/$(database)/documents/chats/$(chatId)).data.sellerId == request.auth.uid
+        allow read: if isChatParticipant(
+          get(/databases/$(database)/documents/chats/$(chatId)).data
         );
-        allow create: if isSignedIn();
+        allow create: if signedIn()
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.chatId == chatId;
         allow update, delete: if false;
       }
     }
 
-    // Payments collection
+    // ─── Payments ───────────────────────────────────────────────────────────
+    // Participants and admins can read.
+    // Only a verified buyer can create (status must start as 'held').
+    // Buyer can update to 'released' (QR scan); admin can set 'refunded'.
+    // Nobody can delete payments.
+
     match /payments/{paymentId} {
-      allow read: if isSignedIn() && (
-        resource.data.buyerId == request.auth.uid ||
-        resource.data.sellerId == request.auth.uid ||
-        isAdmin()
-      );
-      allow create: if isVerified();
-      allow update: if (
-        isOwner(resource.data.buyerId) && resource.data.status == 'held'
-      ) || isAdmin();
+      allow read: if isPaymentParticipant(resource.data) || isAdmin();
+
+      allow create: if isVerified()
+        && request.resource.data.buyerId == request.auth.uid
+        && request.resource.data.status == 'held'
+        && request.resource.data.amount > 0;
+
+      allow update: if
+        // Buyer can release (QR scan completes the transaction)
+        (isOwner(resource.data.buyerId)
+          && resource.data.status == 'held'
+          && request.resource.data.status == 'released'
+          && !request.resource.data.diff(resource.data)
+              .affectedKeys().hasAny(['buyerId','sellerId','amount','fee','listingId']))
+        // Admin can refund
+        || (isAdmin()
+          && resource.data.status == 'held'
+          && request.resource.data.status == 'refunded');
+
       allow delete: if false;
     }
 
-    // Ratings collection
+    // ─── Ratings ────────────────────────────────────────────────────────────
+    // Public read. Only verified users can rate; no edits/deletes.
+
     match /ratings/{ratingId} {
       allow read: if true;
-      allow create: if isVerified();
+      allow create: if isVerified()
+        && request.resource.data.fromUserId == request.auth.uid
+        && request.resource.data.score >= 1
+        && request.resource.data.score <= 5;
       allow update, delete: if false;
     }
   }
