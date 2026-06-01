@@ -3,7 +3,7 @@ import {
   View, StyleSheet, FlatList, RefreshControl,
   TouchableOpacity, Image, ScrollView,
 } from 'react-native';
-import { Text, Searchbar, Chip, Badge, ActivityIndicator, Banner } from 'react-native-paper';
+import { Text, Searchbar, Chip, ActivityIndicator } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { collection, query, where, orderBy, onSnapshot, limit } from 'firebase/firestore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -12,12 +12,13 @@ import { useAuthStore } from '../../store/authStore';
 import { useListingStore } from '../../store/listingStore';
 import { Listing } from '../../types';
 import { Colors, Spacing, FontSize, BorderRadius, Shadow } from '../../constants/theme';
-import { LISTING_CATEGORIES, LISTING_STATUSES, APP_NAME, VERIFICATION_STATUSES } from '../../constants';
+import { LISTING_CATEGORIES, LISTING_STATUSES, APP_NAME } from '../../constants';
 import { formatPrice, timeAgo } from '../../lib/utils';
+import VerificationBanner from '../../components/ui/VerificationBanner';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { user } = useAuthStore();
+  const { user, refreshUser } = useAuthStore();
   const { listings, setListings, selectedCategory, setSelectedCategory, searchQuery, setSearchQuery, isLoading, setLoading } = useListingStore();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -46,13 +47,11 @@ export default function HomeScreen() {
     return matchCat && matchSearch;
   });
 
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 1000);
-  }, []);
-
-  const isPending = user?.verificationStatus === VERIFICATION_STATUSES.PENDING;
-  const isRejected = user?.verificationStatus === VERIFICATION_STATUSES.REJECTED;
+    await refreshUser(); // re-check verification status on pull-to-refresh
+    setRefreshing(false);
+  }, [refreshUser]);
 
   return (
     <View style={styles.container}>
@@ -86,31 +85,7 @@ export default function HomeScreen() {
         />
       </View>
 
-      {isPending && (
-        <Banner
-          visible
-          icon="clock-outline"
-          style={styles.pendingBanner}
-          actions={[]}
-        >
-          <Text style={styles.bannerText}>
-            Your student ID is pending verification. You can browse but cannot create listings or use checkout.
-          </Text>
-        </Banner>
-      )}
-
-      {isRejected && (
-        <Banner
-          visible
-          icon="alert-circle"
-          style={styles.rejectedBanner}
-          actions={[]}
-        >
-          <Text style={styles.bannerText}>
-            Your ID verification was rejected. Please contact support or re-register.
-          </Text>
-        </Banner>
-      )}
+      <VerificationBanner />
 
       <ScrollView
         horizontal
@@ -235,9 +210,6 @@ const styles = StyleSheet.create({
   sellButtonText: { fontSize: FontSize.sm, fontWeight: 'bold', color: Colors.text },
   searchbar: { borderRadius: BorderRadius.lg, backgroundColor: Colors.surface },
   searchInput: { fontSize: FontSize.md },
-  pendingBanner: { backgroundColor: '#FFF8E1' },
-  rejectedBanner: { backgroundColor: '#FFEBEE' },
-  bannerText: { fontSize: FontSize.sm, color: Colors.text },
   categoryScroll: { flexGrow: 0 },
   categoryContainer: { padding: Spacing.sm, gap: Spacing.sm, paddingVertical: Spacing.md },
   chip: { backgroundColor: Colors.surface },

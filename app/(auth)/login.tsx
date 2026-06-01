@@ -1,5 +1,8 @@
 import { useState } from 'react';
-import { View, StyleSheet, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import {
+  View, StyleSheet, ScrollView,
+  KeyboardAvoidingView, Platform, TouchableOpacity,
+} from 'react-native';
 import { Text, TextInput, Button, HelperText } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -12,6 +15,7 @@ import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
 export default function LoginScreen() {
   const router = useRouter();
   const { setUser, setFirebaseUser } = useAuthStore();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -19,13 +23,13 @@ export default function LoginScreen() {
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
 
   const validate = () => {
-    const newErrors: typeof errors = {};
-    if (!email.trim()) newErrors.email = 'Email is required';
-    else if (!/\S+@\S+\.\S+/.test(email)) newErrors.email = 'Enter a valid email address';
-    if (!password) newErrors.password = 'Password is required';
-    else if (password.length < 6) newErrors.password = 'Password must be at least 6 characters';
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    const e: typeof errors = {};
+    if (!email.trim()) e.email = 'Email is required';
+    else if (!/\S+@\S+\.\S+/.test(email)) e.email = 'Enter a valid email address';
+    if (!password) e.password = 'Password is required';
+    else if (password.length < 6) e.password = 'Must be at least 6 characters';
+    setErrors(e);
+    return Object.keys(e).length === 0;
   };
 
   const handleLogin = async () => {
@@ -37,16 +41,23 @@ export default function LoginScreen() {
       if (userDoc.exists()) {
         setFirebaseUser(credential.user);
         setUser({ id: credential.user.uid, ...userDoc.data() } as any);
-        Toast.show({ type: 'success', text1: 'Welcome back!', text2: `Signed in as ${email}` });
-        router.replace('/(tabs)/home');
       }
+      Toast.show({ type: 'success', text1: 'Welcome back! 👋' });
+      router.replace('/(tabs)/home');
     } catch (error: any) {
-      let message = 'Login failed. Please try again.';
-      if (error.code === 'auth/user-not-found') message = 'No account found with this email.';
-      else if (error.code === 'auth/wrong-password') message = 'Incorrect password.';
-      else if (error.code === 'auth/invalid-email') message = 'Invalid email address.';
-      else if (error.code === 'auth/too-many-requests') message = 'Too many attempts. Please wait.';
-      Toast.show({ type: 'error', text1: 'Login Failed', text2: message });
+      const msg: Record<string, string> = {
+        'auth/user-not-found': 'No account found with this email.',
+        'auth/wrong-password': 'Incorrect password. Try again.',
+        'auth/invalid-credential': 'Incorrect email or password.',
+        'auth/invalid-email': 'Invalid email address.',
+        'auth/too-many-requests': 'Too many failed attempts. Please wait a few minutes.',
+        'auth/network-request-failed': 'No internet connection.',
+      };
+      Toast.show({
+        type: 'error',
+        text1: 'Login Failed',
+        text2: msg[error.code] || 'Something went wrong. Try again.',
+      });
     } finally {
       setIsLoading(false);
     }
@@ -57,57 +68,52 @@ export default function LoginScreen() {
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <ScrollView
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-      >
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
-          <Text style={styles.headerEmoji}>🔑</Text>
-          <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Sign in to your Ugbowo Market account</Text>
+          <Text style={styles.headerEmoji}>🏪</Text>
+          <Text style={styles.title}>Sign In</Text>
+          <Text style={styles.subtitle}>Welcome back to Ugbowo Market</Text>
         </View>
 
         <View style={styles.form}>
           <TextInput
             label="Email Address"
             value={email}
-            onChangeText={setEmail}
+            onChangeText={(v) => { setEmail(v); setErrors((e) => ({ ...e, email: '' })); }}
             keyboardType="email-address"
             autoCapitalize="none"
+            autoCorrect={false}
             mode="outlined"
             style={styles.input}
             error={!!errors.email}
-            left={<TextInput.Icon icon="email" />}
+            left={<TextInput.Icon icon="email-outline" />}
           />
           <HelperText type="error" visible={!!errors.email}>{errors.email}</HelperText>
 
           <TextInput
             label="Password"
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(v) => { setPassword(v); setErrors((e) => ({ ...e, password: '' })); }}
             secureTextEntry={!showPassword}
             mode="outlined"
             style={styles.input}
             error={!!errors.password}
-            left={<TextInput.Icon icon="lock" />}
+            left={<TextInput.Icon icon="lock-outline" />}
             right={
               <TextInput.Icon
-                icon={showPassword ? 'eye-off' : 'eye'}
+                icon={showPassword ? 'eye-off-outline' : 'eye-outline'}
                 onPress={() => setShowPassword(!showPassword)}
               />
             }
           />
           <HelperText type="error" visible={!!errors.password}>{errors.password}</HelperText>
 
-          <Button
-            mode="text"
+          <TouchableOpacity
             onPress={() => router.push('/(auth)/forgot-password')}
-            style={styles.forgotButton}
-            labelStyle={styles.forgotLabel}
-            textColor={Colors.primary}
+            style={styles.forgotRow}
           >
-            Forgot Password?
-          </Button>
+            <Text style={styles.forgotText}>Forgot your password?</Text>
+          </TouchableOpacity>
 
           <Button
             mode="contained"
@@ -124,16 +130,17 @@ export default function LoginScreen() {
 
         <View style={styles.footer}>
           <Text style={styles.footerText}>Don't have an account? </Text>
-          <Button
-            mode="text"
-            onPress={() => router.push('/(auth)/register')}
-            compact
-            labelStyle={styles.registerLabel}
-            textColor={Colors.primary}
-          >
-            Sign Up
-          </Button>
+          <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
+            <Text style={styles.footerLink}>Sign Up</Text>
+          </TouchableOpacity>
         </View>
+
+        <TouchableOpacity
+          onPress={() => router.replace('/(tabs)/home')}
+          style={styles.guestRow}
+        >
+          <Text style={styles.guestText}>Continue as guest (browse only)</Text>
+        </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -141,31 +148,15 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: Colors.background },
-  container: {
-    flexGrow: 1,
-    padding: Spacing.lg,
-    justifyContent: 'center',
-  },
-  header: {
-    alignItems: 'center',
-    marginBottom: Spacing.xl,
-  },
-  headerEmoji: { fontSize: 48, marginBottom: Spacing.sm },
-  title: {
-    fontSize: FontSize.xxxl,
-    fontWeight: 'bold',
-    color: Colors.primary,
-    marginBottom: Spacing.xs,
-  },
-  subtitle: {
-    fontSize: FontSize.md,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-  },
+  container: { flexGrow: 1, padding: Spacing.lg, justifyContent: 'center' },
+  header: { alignItems: 'center', marginBottom: Spacing.xl },
+  headerEmoji: { fontSize: 52, marginBottom: Spacing.sm },
+  title: { fontSize: FontSize.xxxl, fontWeight: 'bold', color: Colors.primary },
+  subtitle: { fontSize: FontSize.md, color: Colors.textSecondary, marginTop: 4 },
   form: { gap: Spacing.xs },
   input: { backgroundColor: Colors.surface },
-  forgotButton: { alignSelf: 'flex-end' },
-  forgotLabel: { fontSize: FontSize.sm },
+  forgotRow: { alignSelf: 'flex-end', marginTop: -Spacing.xs },
+  forgotText: { fontSize: FontSize.sm, color: Colors.primary, fontWeight: '600' },
   loginButton: {
     marginTop: Spacing.md,
     borderRadius: BorderRadius.lg,
@@ -175,10 +166,12 @@ const styles = StyleSheet.create({
   buttonLabel: { fontSize: FontSize.lg, fontWeight: 'bold' },
   footer: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
     marginTop: Spacing.xl,
   },
   footerText: { fontSize: FontSize.md, color: Colors.textSecondary },
-  registerLabel: { fontSize: FontSize.md, fontWeight: 'bold' },
+  footerLink: { fontSize: FontSize.md, color: Colors.primary, fontWeight: 'bold' },
+  guestRow: { alignItems: 'center', marginTop: Spacing.md },
+  guestText: { fontSize: FontSize.sm, color: Colors.placeholder, textDecorationLine: 'underline' },
 });
