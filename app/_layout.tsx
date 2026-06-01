@@ -16,7 +16,11 @@ export default function RootLayout() {
   const { setUser, setFirebaseUser, setInitialized, isInitialized } = useAuthStore();
 
   useEffect(() => {
+    // Safety timeout: if Firebase doesn't respond in 5s, unblock the app anyway
+    const timeout = setTimeout(() => setInitialized(true), 5000);
+
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      clearTimeout(timeout);
       if (fbUser) {
         setFirebaseUser(fbUser);
         try {
@@ -34,7 +38,10 @@ export default function RootLayout() {
       setInitialized(true);
     });
 
-    return unsubscribe;
+    return () => {
+      clearTimeout(timeout);
+      unsubscribe();
+    };
   }, []);
 
   // Block rendering until Firebase restores auth state from AsyncStorage
