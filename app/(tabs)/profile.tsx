@@ -2,6 +2,7 @@ import { View, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Text, Avatar, Button, Divider, List } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import { auth } from '../../lib/firebase';
 import { useAuthStore } from '../../store/authStore';
@@ -52,33 +53,55 @@ export default function ProfileScreen() {
     );
   }
 
-  const verificationColor = {
-    [VERIFICATION_STATUSES.VERIFIED]: Colors.success,
-    [VERIFICATION_STATUSES.PENDING]: Colors.warning,
-    [VERIFICATION_STATUSES.REJECTED]: Colors.error,
-  }[user.verificationStatus] || Colors.textSecondary;
+  const isVerified = user.verificationStatus === VERIFICATION_STATUSES.VERIFIED;
+  const isPending = user.verificationStatus === VERIFICATION_STATUSES.PENDING;
+  const isRejected = user.verificationStatus === VERIFICATION_STATUSES.REJECTED;
+  const isUnverified = !isVerified && !isPending;
 
-  const verificationLabel = {
-    [VERIFICATION_STATUSES.VERIFIED]: '✅ Verified Student',
-    [VERIFICATION_STATUSES.PENDING]: '⏳ Verification Pending',
-    [VERIFICATION_STATUSES.REJECTED]: '❌ Verification Rejected',
-  }[user.verificationStatus] || 'Unknown';
+  const verificationColor = isVerified ? Colors.success
+    : isPending ? Colors.warning
+    : isRejected ? Colors.error
+    : Colors.textSecondary;
+
+  const verificationLabel = isVerified ? '✅ Verified Student'
+    : isPending ? '⏳ Verification Pending'
+    : isRejected ? '❌ Verification Rejected'
+    : '⚪ Not Verified';
+
+  const avatarRingColor = isVerified ? Colors.accent
+    : isPending ? Colors.warning
+    : Colors.surface;
 
   const initial = user.name?.[0]?.toUpperCase() || '?';
 
+  const joinYear = user.createdAt
+    ? new Date(user.createdAt).getFullYear()
+    : null;
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+      {/* Header */}
       <View style={styles.header}>
-        <Avatar.Text
-          size={72}
-          label={initial}
-          style={styles.avatar}
-          labelStyle={styles.avatarLabel}
-        />
+        <TouchableOpacity onPress={() => router.push('/edit-profile')} style={styles.editIconWrap}>
+          <MaterialCommunityIcons name="pencil" size={18} color="rgba(255,255,255,0.7)" />
+        </TouchableOpacity>
+        <View style={[styles.avatarRing, { borderColor: avatarRingColor }]}>
+          <Avatar.Text
+            size={72}
+            label={initial}
+            style={styles.avatar}
+            labelStyle={styles.avatarLabel}
+          />
+          {isVerified && (
+            <View style={styles.verifiedBadgePin}>
+              <MaterialCommunityIcons name="check-decagram" size={20} color={Colors.accent} />
+            </View>
+          )}
+        </View>
         <Text style={styles.name}>{user.name}</Text>
         <Text style={styles.email}>{user.email}</Text>
-        <View style={[styles.verificationBadge, { backgroundColor: verificationColor + '22' }]}>
-          <Text style={[styles.verificationText, { color: verificationColor }]}>
+        <View style={[styles.verificationChip, { backgroundColor: verificationColor + '28' }]}>
+          <Text style={[styles.verificationChipText, { color: verificationColor }]}>
             {verificationLabel}
           </Text>
         </View>
@@ -89,12 +112,57 @@ export default function ProfileScreen() {
         )}
       </View>
 
-      <View style={styles.statsRow}>
-        <StatBox label="Rating" value={user.rating > 0 ? `⭐ ${user.rating.toFixed(1)}` : '—'} />
-        <StatBox label="Sales" value={user.totalSales.toString()} />
-        <StatBox label="Wallet" value={formatPrice(user.walletBalance || 0)} />
+      {/* Stats row — floats over the header */}
+      <View style={styles.statsCard}>
+        <StatBox
+          label="Rating"
+          value={user.rating > 0 ? user.rating.toFixed(1) : '—'}
+          icon="star"
+          iconColor={Colors.warning}
+        />
+        <View style={styles.statsDivider} />
+        <StatBox
+          label="Sales"
+          value={user.totalSales > 0 ? user.totalSales.toString() : '0'}
+          icon="package-variant-closed"
+          iconColor={Colors.primary}
+        />
+        <View style={styles.statsDivider} />
+        <StatBox
+          label="Wallet"
+          value={formatPrice(user.walletBalance || 0)}
+          icon="wallet"
+          iconColor={Colors.success}
+        />
       </View>
 
+      {/* Verification nudge */}
+      {(isUnverified || isRejected) && (
+        <TouchableOpacity style={styles.verifyNudge} onPress={() => router.push('/admin')} activeOpacity={0.85}>
+          <MaterialCommunityIcons name="shield-alert" size={22} color={Colors.warning} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.verifyNudgeTitle}>
+              {isRejected ? 'Re-submit Verification' : 'Verify Your Student ID'}
+            </Text>
+            <Text style={styles.verifyNudgeSubtitle}>
+              {isRejected
+                ? 'Your ID was rejected. Submit a clearer photo to unlock selling.'
+                : 'Get a ✅ badge and start selling to fellow UNIBEN students'}
+            </Text>
+          </View>
+          <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.warning} />
+        </TouchableOpacity>
+      )}
+      {isPending && (
+        <View style={styles.pendingBanner}>
+          <MaterialCommunityIcons name="clock-outline" size={18} color={Colors.warning} />
+          <Text style={styles.pendingBannerText}>
+            Student ID under review — usually takes a few hours
+          </Text>
+        </View>
+      )}
+
+      {/* Account section */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Account</Text>
         <List.Item
@@ -126,7 +194,7 @@ export default function ProfileScreen() {
         <Divider />
         <List.Item
           title="Edit Profile"
-          description="Update your personal information"
+          description="Update your name, phone, department"
           left={(p) => <List.Icon {...p} icon="account-edit" color={Colors.primary} />}
           right={(p) => <List.Icon {...p} icon="chevron-right" />}
           onPress={() => router.push('/edit-profile')}
@@ -134,6 +202,7 @@ export default function ProfileScreen() {
         />
       </View>
 
+      {/* Admin section */}
       {user.isAdmin && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Admin</Text>
@@ -148,28 +217,40 @@ export default function ProfileScreen() {
         </View>
       )}
 
+      {/* Info section */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Info</Text>
         <List.Item
           title="Department"
-          description={user.department}
+          description={user.department || '—'}
           left={(p) => <List.Icon {...p} icon="school" color={Colors.textSecondary} />}
           style={styles.listItem}
         />
         <Divider />
         <List.Item
           title="Student ID"
-          description={user.studentIdNumber}
+          description={user.studentIdNumber || '—'}
           left={(p) => <List.Icon {...p} icon="card-account-details" color={Colors.textSecondary} />}
           style={styles.listItem}
         />
         <Divider />
         <List.Item
           title="Phone"
-          description={user.phone}
+          description={user.phone || '—'}
           left={(p) => <List.Icon {...p} icon="phone" color={Colors.textSecondary} />}
           style={styles.listItem}
         />
+        {joinYear && (
+          <>
+            <Divider />
+            <List.Item
+              title="Member since"
+              description={joinYear.toString()}
+              left={(p) => <List.Icon {...p} icon="calendar" color={Colors.textSecondary} />}
+              style={styles.listItem}
+            />
+          </>
+        )}
       </View>
 
       <Button
@@ -187,9 +268,14 @@ export default function ProfileScreen() {
   );
 }
 
-function StatBox({ label, value }: { label: string; value: string }) {
+function StatBox({
+  label, value, icon, iconColor,
+}: {
+  label: string; value: string; icon: string; iconColor: string;
+}) {
   return (
     <View style={styles.statBox}>
+      <MaterialCommunityIcons name={icon as any} size={18} color={iconColor} style={{ marginBottom: 2 }} />
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
@@ -198,7 +284,8 @@ function StatBox({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  contentContainer: { paddingBottom: Spacing.xxl },
+  contentContainer: { paddingBottom: 48 },
+
   guestContainer: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
     padding: Spacing.xl, gap: Spacing.md, backgroundColor: Colors.background,
@@ -211,40 +298,76 @@ const styles = StyleSheet.create({
   signInLabel: { fontSize: FontSize.lg, fontWeight: 'bold' },
   registerButton: { width: '100%', borderRadius: BorderRadius.lg, borderColor: Colors.primary },
   registerLabel: { fontSize: FontSize.lg },
+
   header: {
     backgroundColor: Colors.primary,
     alignItems: 'center',
     paddingTop: Spacing.xl + Spacing.lg,
-    paddingBottom: Spacing.xl,
+    paddingBottom: Spacing.xl + Spacing.md,
     gap: Spacing.sm,
+    position: 'relative',
+  },
+  editIconWrap: {
+    position: 'absolute', top: Spacing.xl + Spacing.md, right: Spacing.md,
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  avatarRing: {
+    borderWidth: 3, borderRadius: 42, padding: 2,
+    position: 'relative',
   },
   avatar: { backgroundColor: Colors.accent },
   avatarLabel: { color: Colors.text, fontWeight: 'bold', fontSize: FontSize.xxl },
+  verifiedBadgePin: {
+    position: 'absolute', bottom: -2, right: -2,
+    backgroundColor: Colors.primary, borderRadius: 12,
+  },
   name: { fontSize: FontSize.xxl, fontWeight: 'bold', color: Colors.textOnPrimary },
   email: { fontSize: FontSize.sm, color: 'rgba(255,255,255,0.7)' },
-  verificationBadge: {
+  verificationChip: {
     paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs,
     borderRadius: BorderRadius.round,
   },
-  verificationText: { fontSize: FontSize.sm, fontWeight: '600' },
+  verificationChipText: { fontSize: FontSize.sm, fontWeight: '600' },
   adminBadge: {
     backgroundColor: Colors.accent,
     paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs,
     borderRadius: BorderRadius.round,
   },
   adminText: { fontSize: FontSize.sm, fontWeight: 'bold', color: Colors.text },
-  statsRow: {
+
+  statsCard: {
     flexDirection: 'row',
     backgroundColor: Colors.surface,
     marginHorizontal: Spacing.md,
-    marginTop: -Spacing.sm,
+    marginTop: -Spacing.md,
     borderRadius: BorderRadius.lg,
-    ...Shadow.small,
+    ...Shadow.medium,
     overflow: 'hidden',
   },
-  statBox: { flex: 1, alignItems: 'center', padding: Spacing.md },
-  statValue: { fontSize: FontSize.lg, fontWeight: 'bold', color: Colors.primary },
-  statLabel: { fontSize: FontSize.xs, color: Colors.textSecondary, marginTop: 2 },
+  statBox: { flex: 1, alignItems: 'center', paddingVertical: Spacing.md, paddingHorizontal: Spacing.xs },
+  statValue: { fontSize: FontSize.lg, fontWeight: 'bold', color: Colors.text },
+  statLabel: { fontSize: FontSize.xs, color: Colors.textSecondary, marginTop: 1 },
+  statsDivider: { width: 1, backgroundColor: Colors.border, marginVertical: Spacing.sm },
+
+  verifyNudge: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    backgroundColor: '#FFF8E1',
+    marginHorizontal: Spacing.md, marginTop: Spacing.md,
+    borderRadius: BorderRadius.lg, padding: Spacing.md,
+    borderWidth: 1, borderColor: Colors.warning + '44',
+  },
+  verifyNudgeTitle: { fontSize: FontSize.sm, fontWeight: 'bold', color: Colors.text },
+  verifyNudgeSubtitle: { fontSize: FontSize.xs, color: Colors.textSecondary, marginTop: 2, lineHeight: 16 },
+  pendingBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    backgroundColor: '#FFF8E1',
+    marginHorizontal: Spacing.md, marginTop: Spacing.md,
+    borderRadius: BorderRadius.lg, padding: Spacing.md,
+  },
+  pendingBannerText: { fontSize: FontSize.sm, color: Colors.warning, flex: 1 },
+
   section: {
     backgroundColor: Colors.surface,
     marginHorizontal: Spacing.md,
@@ -254,7 +377,7 @@ const styles = StyleSheet.create({
     ...Shadow.small,
   },
   sectionTitle: {
-    fontSize: FontSize.sm,
+    fontSize: FontSize.xs,
     fontWeight: 'bold',
     color: Colors.textSecondary,
     paddingHorizontal: Spacing.md,
