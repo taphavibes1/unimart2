@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
-import { Text, ActivityIndicator, Avatar } from 'react-native-paper';
+import { View, StyleSheet, FlatList, TouchableOpacity, Image } from 'react-native';
+import { Text, Avatar } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { subscribeToUserChats } from '../../lib/firestore';
 import { useAuthStore } from '../../store/authStore';
@@ -25,10 +25,15 @@ export default function ChatsScreen() {
 
   if (!firebaseUser) {
     return (
-      <View style={styles.authContainer}>
-        <Text style={styles.authEmoji}>💬</Text>
-        <Text style={styles.authTitle}>Sign in to access chats</Text>
-        <Text style={styles.authSubtitle}>Chat with sellers and negotiate prices</Text>
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Messages</Text>
+        </View>
+        <View style={styles.centered}>
+          <Text style={styles.emptyEmoji}>💬</Text>
+          <Text style={styles.emptyTitle}>Sign in to access chats</Text>
+          <Text style={styles.emptySubtitle}>Chat with sellers and negotiate prices</Text>
+        </View>
       </View>
     );
   }
@@ -37,15 +42,15 @@ export default function ChatsScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Messages</Text>
-        <Text style={styles.headerSubtitle}>
-          {chats.length} conversation{chats.length !== 1 ? 's' : ''}
-        </Text>
+        {!isLoading && chats.length > 0 && (
+          <Text style={styles.headerSubtitle}>
+            {chats.length} conversation{chats.length !== 1 ? 's' : ''}
+          </Text>
+        )}
       </View>
 
       {isLoading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-        </View>
+        <SkeletonList />
       ) : chats.length === 0 ? (
         <View style={styles.centered}>
           <Text style={styles.emptyEmoji}>💬</Text>
@@ -58,6 +63,7 @@ export default function ChatsScreen() {
         <FlatList
           data={chats}
           keyExtractor={(item) => item.id}
+          showsVerticalScrollIndicator={false}
           renderItem={({ item }) => (
             <ChatListItem
               chat={item}
@@ -79,30 +85,64 @@ function ChatListItem({
   const isBuyer = chat.buyerId === currentUserId;
   const otherName = isBuyer ? chat.sellerName : chat.buyerName;
   const initial = otherName?.[0]?.toUpperCase() || '?';
+  const isOfferAccepted = chat.status === 'offer_accepted';
 
   return (
-    <TouchableOpacity style={styles.chatItem} onPress={onPress} activeOpacity={0.8}>
-      <Avatar.Text
-        size={50}
-        label={initial}
-        style={styles.avatar}
-        labelStyle={styles.avatarLabel}
-      />
+    <TouchableOpacity
+      style={[styles.chatItem, isOfferAccepted && styles.chatItemAccepted]}
+      onPress={onPress}
+      activeOpacity={0.8}
+    >
+      <View style={styles.avatarWrap}>
+        <Avatar.Text size={48} label={initial} style={styles.avatar} labelStyle={styles.avatarLabel} />
+        {isOfferAccepted && <View style={styles.acceptedDot} />}
+      </View>
+
       <View style={styles.chatBody}>
         <View style={styles.chatTop}>
           <Text style={styles.chatName} numberOfLines={1}>{otherName}</Text>
           <Text style={styles.chatTime}>{timeAgo(chat.lastMessageTime)}</Text>
         </View>
-        <Text style={styles.chatListing} numberOfLines={1}>re: {chat.listingTitle}</Text>
-        <Text style={styles.chatLastMessage} numberOfLines={1}>{chat.lastMessage}</Text>
-        {chat.status === 'offer_accepted' && (
-          <View style={styles.offerBadge}>
-            <Text style={styles.offerBadgeText}>✓ Offer Accepted</Text>
+        <Text style={styles.chatListing} numberOfLines={1}>📦 {chat.listingTitle}</Text>
+        <Text style={[styles.chatLastMsg, isOfferAccepted && styles.chatLastMsgAccepted]} numberOfLines={1}>
+          {chat.lastMessage}
+        </Text>
+        {isOfferAccepted && (
+          <View style={[styles.offerBadge, isBuyer && styles.offerBadgeBuyer]}>
+            <Text style={[styles.offerBadgeText, isBuyer && { color: Colors.primary }]}>
+              {isBuyer ? '✓ Offer accepted — tap to pay →' : '✓ Offer accepted — awaiting payment'}
+            </Text>
           </View>
         )}
       </View>
+
+      {chat.listingImageUrl ? (
+        <Image source={{ uri: chat.listingImageUrl }} style={styles.thumb} />
+      ) : (
+        <View style={[styles.thumb, styles.thumbPlaceholder]}>
+          <Text style={styles.thumbPlaceholderText}>📦</Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
+}
+
+function SkeletonRow() {
+  return (
+    <View style={styles.chatItem}>
+      <View style={styles.skeletonCircle} />
+      <View style={styles.chatBody}>
+        <View style={[styles.skeletonLine, { width: '50%', marginBottom: 8 }]} />
+        <View style={[styles.skeletonLine, { width: '80%', marginBottom: 6 }]} />
+        <View style={[styles.skeletonLine, { width: '65%', height: 10 }]} />
+      </View>
+      <View style={[styles.thumb, { backgroundColor: Colors.border }]} />
+    </View>
+  );
+}
+
+function SkeletonList() {
+  return <>{[0, 1, 2, 3, 4].map((i) => <SkeletonRow key={i} />)}</>;
 }
 
 const styles = StyleSheet.create({
@@ -114,14 +154,7 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.lg,
   },
   headerTitle: { fontSize: FontSize.xxl, fontWeight: 'bold', color: Colors.textOnPrimary },
-  headerSubtitle: { fontSize: FontSize.sm, color: 'rgba(255,255,255,0.7)' },
-  authContainer: {
-    flex: 1, alignItems: 'center', justifyContent: 'center',
-    padding: Spacing.xl, backgroundColor: Colors.background,
-  },
-  authEmoji: { fontSize: 56, marginBottom: Spacing.md },
-  authTitle: { fontSize: FontSize.xl, fontWeight: 'bold', color: Colors.text, marginBottom: Spacing.sm },
-  authSubtitle: { fontSize: FontSize.md, color: Colors.textSecondary, textAlign: 'center' },
+  headerSubtitle: { fontSize: FontSize.sm, color: 'rgba(255,255,255,0.7)', marginTop: 2 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xl },
   emptyEmoji: { fontSize: 56, marginBottom: Spacing.md },
   emptyTitle: { fontSize: FontSize.xl, fontWeight: 'bold', color: Colors.text, marginBottom: Spacing.sm },
@@ -129,23 +162,37 @@ const styles = StyleSheet.create({
   chatItem: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: Colors.surface,
-    padding: Spacing.md,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.md,
     borderBottomWidth: 1, borderBottomColor: Colors.border,
     gap: Spacing.md,
   },
+  chatItemAccepted: { backgroundColor: '#F1F8E9' },
+  avatarWrap: { position: 'relative' },
   avatar: { backgroundColor: Colors.primaryLight },
   avatarLabel: { color: Colors.textOnPrimary, fontWeight: 'bold' },
-  chatBody: { flex: 1 },
+  acceptedDot: {
+    position: 'absolute', bottom: 0, right: 0,
+    width: 14, height: 14, borderRadius: 7,
+    backgroundColor: Colors.success, borderWidth: 2, borderColor: Colors.surface,
+  },
+  chatBody: { flex: 1, minWidth: 0 },
   chatTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 },
   chatName: { fontSize: FontSize.md, fontWeight: 'bold', color: Colors.text, flex: 1 },
-  chatTime: { fontSize: FontSize.xs, color: Colors.textSecondary },
+  chatTime: { fontSize: FontSize.xs, color: Colors.textSecondary, marginLeft: Spacing.xs },
   chatListing: { fontSize: FontSize.xs, color: Colors.primary, marginBottom: 2 },
-  chatLastMessage: { fontSize: FontSize.sm, color: Colors.textSecondary },
+  chatLastMsg: { fontSize: FontSize.sm, color: Colors.textSecondary },
+  chatLastMsgAccepted: { color: Colors.success, fontWeight: '600' },
   offerBadge: {
     alignSelf: 'flex-start', marginTop: 4,
     backgroundColor: '#E8F5E9',
     paddingHorizontal: 8, paddingVertical: 2,
     borderRadius: BorderRadius.round,
   },
+  offerBadgeBuyer: { backgroundColor: '#E3F2FD' },
   offerBadgeText: { fontSize: FontSize.xs, color: Colors.success, fontWeight: 'bold' },
+  thumb: { width: 52, height: 52, borderRadius: BorderRadius.md, resizeMode: 'cover', flexShrink: 0 },
+  thumbPlaceholder: { backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
+  thumbPlaceholderText: { fontSize: 20 },
+  skeletonCircle: { width: 48, height: 48, borderRadius: 24, backgroundColor: Colors.border },
+  skeletonLine: { height: 12, borderRadius: 6, backgroundColor: Colors.border },
 });
