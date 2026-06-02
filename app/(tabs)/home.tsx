@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, StyleSheet, FlatList, RefreshControl,
   TouchableOpacity, Image, ScrollView,
@@ -14,6 +14,10 @@ import { Colors, Spacing, FontSize, BorderRadius, Shadow } from '../../constants
 import { LISTING_CATEGORIES, LISTING_STATUSES, APP_NAME } from '../../constants';
 import { formatPrice, timeAgo } from '../../lib/utils';
 import VerificationBanner from '../../components/ui/VerificationBanner';
+
+const CATEGORY_ICON: Record<string, string> = Object.fromEntries(
+  LISTING_CATEGORIES.map((c) => [c.id, c.icon])
+);
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -35,14 +39,14 @@ export default function HomeScreen() {
     return unsub;
   }, []);
 
-  const filtered = listings.filter((l) => {
-    const matchCat = !selectedCategory || l.category === selectedCategory;
-    const matchSearch =
-      !searchQuery ||
-      l.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      l.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchCat && matchSearch;
-  });
+  const filtered = useMemo(() => {
+    const q = searchQuery.toLowerCase();
+    return listings.filter((l) => {
+      if (selectedCategory && l.category !== selectedCategory) return false;
+      if (q && !l.title.toLowerCase().includes(q) && !l.description?.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [listings, selectedCategory, searchQuery]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -77,6 +81,7 @@ export default function HomeScreen() {
           onChangeText={setSearchQuery}
           style={styles.searchbar}
           inputStyle={styles.searchInput}
+          icon="magnify"
         />
       </View>
 
@@ -113,19 +118,30 @@ export default function HomeScreen() {
 
       {/* Listing grid */}
       {isLoading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Loading listings...</Text>
-        </View>
+        <SkeletonGrid />
       ) : filtered.length === 0 ? (
         <View style={styles.centered}>
-          <Text style={styles.emptyEmoji}>🛒</Text>
-          <Text style={styles.emptyTitle}>No listings found</Text>
+          <Text style={styles.emptyEmoji}>
+            {searchQuery || selectedCategory ? '🔍' : '🛒'}
+          </Text>
+          <Text style={styles.emptyTitle}>
+            {searchQuery || selectedCategory ? 'No results' : 'No listings yet'}
+          </Text>
           <Text style={styles.emptySubtitle}>
-            {searchQuery || selectedCategory
-              ? 'Try a different search or category'
+            {searchQuery
+              ? `Nothing matching "${searchQuery}"`
+              : selectedCategory
+              ? 'No listings in this category yet'
               : 'Be the first to list something!'}
           </Text>
+          {(searchQuery || selectedCategory) && (
+            <TouchableOpacity
+              style={styles.clearBtn}
+              onPress={() => { setSearchQuery(''); setSelectedCategory(null); }}
+            >
+              <Text style={styles.clearBtnText}>Clear filters</Text>
+            </TouchableOpacity>
+          )}
         </View>
       ) : (
         <FlatList
@@ -134,8 +150,13 @@ export default function HomeScreen() {
           numColumns={2}
           columnWrapperStyle={styles.row}
           contentContainerStyle={styles.listContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[Colors.primary]} />}
           renderItem={({ item }) => <ListingCard listing={item} router={router} />}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          removeClippedSubviews
+          showsVerticalScrollIndicator={false}
         />
       )}
     </View>
@@ -143,25 +164,37 @@ export default function HomeScreen() {
 }
 
 function ListingCard({ listing, router }: { listing: Listing; router: any }) {
+  const catIcon = CATEGORY_ICON[listing.category] ?? 'tag-outline';
+  const isUnavailable = listing.status !== LISTING_STATUSES.AVAILABLE;
+
   return (
     <TouchableOpacity
-      style={styles.card}
+      style={[styles.card, isUnavailable && styles.cardUnavailable]}
       onPress={() => router.push(`/listing/${listing.id}`)}
-      activeOpacity={0.9}
+      activeOpacity={0.88}
     >
       <View style={styles.cardImageContainer}>
         {listing.imageUrls?.[0] ? (
-          <Image source={{ uri: listing.imageUrls[0] }} style={styles.cardImage} />
+          <Image
+            source={{ uri: listing.imageUrls[0] }}
+            style={[styles.cardImage, isUnavailable && styles.imageUnavailable]}
+          />
         ) : (
           <View style={styles.cardImagePlaceholder}>
-            <Text style={styles.placeholderEmoji}>📦</Text>
+            <MaterialCommunityIcons name={catIcon as any} size={36} color={Colors.border} />
           </View>
         )}
-        {listing.status !== LISTING_STATUSES.AVAILABLE && (
+
+        {/* Category badge */}
+        <View style={styles.catBadge}>
+          <MaterialCommunityIcons name={catIcon as any} size={10} color={Colors.primary} />
+        </View>
+
+        {/* Status overlay */}
+        {isUnavailable && (
           <View style={[
             styles.statusBadge,
-            listing.status === LISTING_STATUSES.RESERVED && styles.statusReserved,
-            listing.status === LISTING_STATUSES.SOLD && styles.statusSold,
+            listing.status === LISTING_STATUSES.RESERVED ? styles.statusReserved : styles.statusSold,
           ]}>
             <Text style={styles.statusText}>
               {listing.status === LISTING_STATUSES.RESERVED ? 'Reserved' : 'Sold'}
@@ -169,15 +202,44 @@ function ListingCard({ listing, router }: { listing: Listing; router: any }) {
           </View>
         )}
       </View>
+
       <View style={styles.cardBody}>
         <Text style={styles.cardTitle} numberOfLines={2}>{listing.title}</Text>
         <Text style={styles.cardPrice}>{formatPrice(listing.price)}</Text>
         <View style={styles.cardMeta}>
-          <Text style={styles.cardSeller} numberOfLines={1}>{listing.sellerName}</Text>
+          <Text style={styles.cardSeller} numberOfLines={1}>
+            {listing.sellerRating > 0 ? `⭐ ${listing.sellerRating.toFixed(1)}  ` : ''}{listing.sellerName}
+          </Text>
           <Text style={styles.cardTime}>{timeAgo(listing.createdAt)}</Text>
         </View>
       </View>
     </TouchableOpacity>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <View style={[styles.card, styles.skeletonCard]}>
+      <View style={styles.skeletonImage} />
+      <View style={styles.cardBody}>
+        <View style={[styles.skeletonLine, { width: '90%' }]} />
+        <View style={[styles.skeletonLine, { width: '55%', marginTop: 6 }]} />
+        <View style={[styles.skeletonLine, { width: '70%', marginTop: 6, height: 8 }]} />
+      </View>
+    </View>
+  );
+}
+
+function SkeletonGrid() {
+  return (
+    <View style={styles.listContent}>
+      {[0, 1, 2, 3].map((row) => (
+        <View key={row} style={styles.row}>
+          <SkeletonCard />
+          <SkeletonCard />
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -205,44 +267,56 @@ const styles = StyleSheet.create({
   searchbar: { borderRadius: BorderRadius.lg, backgroundColor: Colors.surface },
   searchInput: { fontSize: FontSize.md },
   categoryScroll: { flexGrow: 0 },
-  categoryContainer: {
-    padding: Spacing.sm, gap: Spacing.sm, paddingVertical: Spacing.md,
-  },
+  categoryContainer: { padding: Spacing.sm, gap: Spacing.sm, paddingVertical: Spacing.md },
   chip: { backgroundColor: Colors.surface },
   chipSelected: { backgroundColor: Colors.primary },
   chipText: { fontSize: FontSize.sm, color: Colors.text },
   chipTextSelected: { color: Colors.textOnPrimary },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xl },
-  loadingText: { marginTop: Spacing.md, color: Colors.textSecondary },
   emptyEmoji: { fontSize: 56, marginBottom: Spacing.md },
   emptyTitle: { fontSize: FontSize.xl, fontWeight: 'bold', color: Colors.text, marginBottom: Spacing.sm },
-  emptySubtitle: { fontSize: FontSize.md, color: Colors.textSecondary, textAlign: 'center' },
+  emptySubtitle: { fontSize: FontSize.md, color: Colors.textSecondary, textAlign: 'center', marginBottom: Spacing.lg },
+  clearBtn: {
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.round, borderWidth: 1, borderColor: Colors.primary,
+  },
+  clearBtnText: { color: Colors.primary, fontWeight: '600', fontSize: FontSize.sm },
   listContent: { padding: Spacing.sm, paddingBottom: Spacing.xxl },
-  row: { justifyContent: 'space-between', paddingHorizontal: Spacing.xs },
+  row: { justifyContent: 'space-between', paddingHorizontal: Spacing.xs, marginBottom: Spacing.sm },
   card: {
     width: '48%', backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.lg, marginBottom: Spacing.md,
-    overflow: 'hidden', ...Shadow.small,
+    borderRadius: BorderRadius.lg, overflow: 'hidden', ...Shadow.small,
   },
+  cardUnavailable: { opacity: 0.72 },
   cardImageContainer: { position: 'relative' },
   cardImage: { width: '100%', height: 130, resizeMode: 'cover' },
+  imageUnavailable: { opacity: 0.6 },
   cardImagePlaceholder: {
     width: '100%', height: 130,
     backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center',
   },
-  placeholderEmoji: { fontSize: 36 },
+  catBadge: {
+    position: 'absolute', bottom: 6, left: 6,
+    width: 20, height: 20, borderRadius: 10,
+    backgroundColor: Colors.surface,
+    alignItems: 'center', justifyContent: 'center',
+    ...Shadow.small,
+  },
   statusBadge: {
     position: 'absolute', top: 6, right: 6,
     paddingHorizontal: 8, paddingVertical: 3,
-    borderRadius: BorderRadius.round, backgroundColor: Colors.statusReserved,
+    borderRadius: BorderRadius.round,
   },
   statusReserved: { backgroundColor: Colors.statusReserved },
   statusSold: { backgroundColor: Colors.statusSold },
   statusText: { fontSize: 10, color: '#fff', fontWeight: 'bold' },
   cardBody: { padding: Spacing.sm },
-  cardTitle: { fontSize: FontSize.sm, fontWeight: '600', color: Colors.text, marginBottom: 4 },
+  cardTitle: { fontSize: FontSize.sm, fontWeight: '600', color: Colors.text, marginBottom: 4, lineHeight: 18 },
   cardPrice: { fontSize: FontSize.lg, fontWeight: 'bold', color: Colors.primary, marginBottom: 4 },
   cardMeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   cardSeller: { fontSize: 10, color: Colors.textSecondary, flex: 1 },
   cardTime: { fontSize: 10, color: Colors.placeholder },
+  skeletonCard: { opacity: 1 },
+  skeletonImage: { width: '100%', height: 130, backgroundColor: Colors.border },
+  skeletonLine: { height: 12, borderRadius: 6, backgroundColor: Colors.border },
 });
