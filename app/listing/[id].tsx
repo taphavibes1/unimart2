@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View, StyleSheet, ScrollView, Image,
-  TouchableOpacity, Dimensions,
+  TouchableOpacity, Dimensions, FlatList,
+  NativeSyntheticEvent, NativeScrollEvent,
 } from 'react-native';
 import { Text, Button, Chip, ActivityIndicator, Avatar, Divider } from 'react-native-paper';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
@@ -17,6 +18,7 @@ import { LISTING_STATUSES, VERIFICATION_STATUSES, LISTING_CATEGORIES } from '../
 import { formatPrice, timeAgo } from '../../lib/utils';
 
 const { width } = Dimensions.get('window');
+const IMAGE_HEIGHT = 300;
 
 export default function ListingDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -28,6 +30,7 @@ export default function ListingDetailScreen() {
   const [isSaved, setIsSaved] = useState(false);
   const [savingToggle, setSavingToggle] = useState(false);
   const [startingChat, setStartingChat] = useState(false);
+  const carouselRef = useRef<FlatList>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -48,10 +51,7 @@ export default function ListingDetailScreen() {
     await toggleSaveListing(listing.id, firebaseUser.uid, isSaved);
     setIsSaved(!isSaved);
     setSavingToggle(false);
-    Toast.show({
-      type: 'success',
-      text1: isSaved ? 'Removed from saved' : 'Saved!',
-    });
+    Toast.show({ type: 'success', text1: isSaved ? 'Removed from saved' : '❤️ Saved!' });
   };
 
   const handleMessageSeller = async () => {
@@ -63,13 +63,9 @@ export default function ListingDetailScreen() {
     setStartingChat(true);
     try {
       const chatId = await getOrCreateChat(
-        listing.id,
-        listing.title,
-        listing.imageUrls?.[0] || '',
-        firebaseUser.uid,
-        user?.name || 'Buyer',
-        listing.sellerId,
-        listing.sellerName
+        listing.id, listing.title, listing.imageUrls?.[0] || '',
+        firebaseUser.uid, user?.name || 'Buyer',
+        listing.sellerId, listing.sellerName
       );
       router.push(`/chat/${chatId}`);
     } finally {
@@ -90,14 +86,14 @@ export default function ListingDetailScreen() {
     router.push(`/checkout/${listing?.id}`);
   };
 
-  if (isLoading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={Colors.primary} />
-      </View>
-    );
-  }
+  const onCarouselScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const idx = Math.round(e.nativeEvent.contentOffset.x / width);
+    setActiveImageIndex(idx);
+  };
 
+  if (isLoading) {
+    return <View style={styles.centered}><ActivityIndicator size="large" color={Colors.primary} /></View>;
+  }
   if (!listing) {
     return (
       <View style={styles.centered}>
@@ -110,6 +106,7 @@ export default function ListingDetailScreen() {
 
   const isOwner = firebaseUser?.uid === listing.sellerId;
   const isAvailable = listing.status === LISTING_STATUSES.AVAILABLE;
+  const images = listing.imageUrls?.length ? listing.imageUrls : null;
 
   return (
     <>
@@ -130,25 +127,29 @@ export default function ListingDetailScreen() {
             ) : null,
         }}
       />
-      <ScrollView style={styles.container}>
+      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+
         {/* Image carousel */}
         <View style={styles.imageContainer}>
-          {listing.imageUrls?.length > 0 ? (
+          {images ? (
             <>
-              <Image
-                source={{ uri: listing.imageUrls[activeImageIndex] }}
-                style={styles.mainImage}
-                resizeMode="cover"
+              <FlatList
+                ref={carouselRef}
+                data={images}
+                keyExtractor={(_, i) => i.toString()}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onScroll={onCarouselScroll}
+                scrollEventThrottle={16}
+                renderItem={({ item }) => (
+                  <Image source={{ uri: item }} style={styles.mainImage} resizeMode="cover" />
+                )}
               />
-              {listing.imageUrls.length > 1 && (
-                <View style={styles.thumbnails}>
-                  {listing.imageUrls.map((uri, i) => (
-                    <TouchableOpacity key={i} onPress={() => setActiveImageIndex(i)}>
-                      <Image
-                        source={{ uri }}
-                        style={[styles.thumbnail, i === activeImageIndex && styles.thumbnailActive]}
-                      />
-                    </TouchableOpacity>
+              {images.length > 1 && (
+                <View style={styles.dotRow}>
+                  {images.map((_, i) => (
+                    <View key={i} style={[styles.dot, i === activeImageIndex && styles.dotActive]} />
                   ))}
                 </View>
               )}
@@ -159,6 +160,7 @@ export default function ListingDetailScreen() {
             </View>
           )}
 
+          {/* Status overlay */}
           {listing.status !== LISTING_STATUSES.AVAILABLE && (
             <View style={[
               styles.statusOverlay,
@@ -169,9 +171,18 @@ export default function ListingDetailScreen() {
               </Text>
             </View>
           )}
+
+          {/* Image count badge */}
+          {images && images.length > 1 && (
+            <View style={styles.imageCountBadge}>
+              <MaterialCommunityIcons name="image-multiple" size={12} color="#fff" />
+              <Text style={styles.imageCountText}>{activeImageIndex + 1}/{images.length}</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.content}>
+          {/* Title + category */}
           <View style={styles.titleRow}>
             <Text style={styles.title} numberOfLines={3}>{listing.title}</Text>
             {categoryLabel && (
@@ -181,26 +192,31 @@ export default function ListingDetailScreen() {
             )}
           </View>
 
+          {/* Price */}
           <Text style={styles.price}>{formatPrice(listing.price)}</Text>
 
+          {/* Meta */}
           <View style={styles.metaRow}>
             <MaterialCommunityIcons name="map-marker-outline" size={14} color={Colors.textSecondary} />
             <Text style={styles.metaText}>{listing.locationLabel || 'UNIBEN Ugbowo'}</Text>
-            <Text style={styles.metaDot}>•</Text>
+            <Text style={styles.metaDot}>·</Text>
+            <MaterialCommunityIcons name="clock-outline" size={13} color={Colors.textSecondary} />
             <Text style={styles.metaText}>{timeAgo(listing.createdAt)}</Text>
           </View>
 
           <Divider style={styles.divider} />
 
+          {/* Description */}
           <Text style={styles.sectionLabel}>Description</Text>
           <Text style={styles.description}>{listing.description}</Text>
 
           <Divider style={styles.divider} />
 
+          {/* Seller */}
           <Text style={styles.sectionLabel}>Seller</Text>
-          <View style={styles.sellerRow}>
+          <View style={styles.sellerCard}>
             <Avatar.Text
-              size={44}
+              size={46}
               label={listing.sellerName?.[0]?.toUpperCase() || '?'}
               style={styles.sellerAvatar}
               labelStyle={styles.sellerAvatarLabel}
@@ -208,9 +224,40 @@ export default function ListingDetailScreen() {
             <View style={styles.sellerInfo}>
               <Text style={styles.sellerName}>{listing.sellerName}</Text>
               {listing.sellerRating > 0 && (
-                <Text style={styles.sellerRating}>⭐ {listing.sellerRating.toFixed(1)} rating</Text>
+                <View style={styles.ratingRow}>
+                  {[1,2,3,4,5].map((s) => (
+                    <MaterialCommunityIcons
+                      key={s}
+                      name={s <= Math.round(listing.sellerRating) ? 'star' : 'star-outline'}
+                      size={14}
+                      color={Colors.warning}
+                    />
+                  ))}
+                  <Text style={styles.ratingNum}>{listing.sellerRating.toFixed(1)}</Text>
+                </View>
               )}
-              <Text style={styles.sellerVerified}>✅ Verified UNIBEN Student</Text>
+              <View style={styles.verifiedRow}>
+                <MaterialCommunityIcons name="check-decagram" size={14} color={Colors.success} />
+                <Text style={styles.sellerVerified}>Verified UNIBEN Student</Text>
+              </View>
+            </View>
+            {!isOwner && firebaseUser && (
+              <TouchableOpacity onPress={handleMessageSeller} style={styles.sellerMessageBtn}>
+                <MaterialCommunityIcons name="chat-outline" size={20} color={Colors.primary} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <Divider style={styles.divider} />
+
+          {/* Escrow trust badge */}
+          <View style={styles.escrowBadge}>
+            <MaterialCommunityIcons name="shield-lock" size={18} color={Colors.primary} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.escrowBadgeTitle}>Protected by Escrow</Text>
+              <Text style={styles.escrowBadgeDesc}>
+                Payment is held safely until you receive and inspect the item
+              </Text>
             </View>
           </View>
         </View>
@@ -231,34 +278,34 @@ export default function ListingDetailScreen() {
           >
             Message
           </Button>
-          {isAvailable && (
+          {isAvailable ? (
             <Button
               mode="contained"
               onPress={handleBuyNow}
               style={styles.buyButton}
               contentStyle={styles.buttonContent}
               labelStyle={styles.buyButtonLabel}
+              icon="lock"
             >
               Buy — {formatPrice(listing.price)}
             </Button>
-          )}
-          {!isAvailable && (
+          ) : (
             <View style={styles.unavailableBox}>
+              <MaterialCommunityIcons
+                name={listing.status === LISTING_STATUSES.SOLD ? 'check-circle' : 'clock-outline'}
+                size={16}
+                color={listing.status === LISTING_STATUSES.SOLD ? Colors.error : Colors.warning}
+              />
               <Text style={styles.unavailableText}>
-                {listing.status === LISTING_STATUSES.SOLD ? 'This item has been sold' : 'This item is reserved'}
+                {listing.status === LISTING_STATUSES.SOLD ? 'Sold' : 'Reserved'}
               </Text>
             </View>
           )}
         </View>
       ) : (
         <View style={styles.ownerBar}>
-          <Text style={styles.ownerText}>📦 This is your listing</Text>
-          <Button
-            mode="text"
-            onPress={() => router.push('/my-listings')}
-            textColor={Colors.primary}
-            compact
-          >
+          <Text style={styles.ownerText}>📦 Your listing</Text>
+          <Button mode="text" onPress={() => router.push('/my-listings')} textColor={Colors.primary} compact>
             Manage →
           </Button>
         </View>
@@ -273,13 +320,27 @@ const styles = StyleSheet.create({
   notFoundEmoji: { fontSize: 56, marginBottom: Spacing.md },
   notFoundTitle: { fontSize: FontSize.xl, fontWeight: 'bold', color: Colors.text, marginBottom: Spacing.md },
   saveBtn: { padding: Spacing.sm },
+
   imageContainer: { position: 'relative', backgroundColor: Colors.border },
-  mainImage: { width, height: 300 },
-  thumbnails: { flexDirection: 'row', padding: Spacing.sm, gap: Spacing.sm, backgroundColor: Colors.surface },
-  thumbnail: { width: 64, height: 64, borderRadius: BorderRadius.sm, opacity: 0.6 },
-  thumbnailActive: { opacity: 1, borderWidth: 2, borderColor: Colors.primary },
-  imagePlaceholder: { width, height: 300, alignItems: 'center', justifyContent: 'center' },
+  mainImage: { width, height: IMAGE_HEIGHT },
+  imagePlaceholder: { width, height: IMAGE_HEIGHT, alignItems: 'center', justifyContent: 'center' },
   placeholderEmoji: { fontSize: 64 },
+
+  dotRow: {
+    position: 'absolute', bottom: Spacing.sm, left: 0, right: 0,
+    flexDirection: 'row', justifyContent: 'center', gap: 6,
+  },
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.5)' },
+  dotActive: { backgroundColor: '#fff', width: 18 },
+
+  imageCountBadge: {
+    position: 'absolute', top: Spacing.sm, right: Spacing.sm,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: BorderRadius.round,
+    paddingHorizontal: 8, paddingVertical: 3,
+  },
+  imageCountText: { fontSize: 11, color: '#fff', fontWeight: '600' },
+
   statusOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
@@ -287,25 +348,46 @@ const styles = StyleSheet.create({
   overlaySold: { backgroundColor: 'rgba(176,0,32,0.6)' },
   overlayReserved: { backgroundColor: 'rgba(245,124,0,0.6)' },
   statusOverlayText: { fontSize: 36, fontWeight: 'bold', color: '#fff', letterSpacing: 4 },
-  content: { padding: Spacing.md, gap: Spacing.sm },
+
+  content: { padding: Spacing.md, gap: Spacing.sm, paddingBottom: Spacing.xl },
   titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: Spacing.sm },
   title: { fontSize: FontSize.xxl, fontWeight: 'bold', color: Colors.text, flex: 1 },
   categoryChip: { backgroundColor: Colors.primaryLight + '22', flexShrink: 0 },
   categoryChipText: { fontSize: FontSize.xs, color: Colors.primary },
   price: { fontSize: FontSize.xxxl, fontWeight: 'bold', color: Colors.primary },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   metaText: { fontSize: FontSize.sm, color: Colors.textSecondary },
-  metaDot: { color: Colors.textSecondary },
+  metaDot: { color: Colors.placeholder, marginHorizontal: 2 },
   divider: { marginVertical: Spacing.sm },
-  sectionLabel: { fontSize: FontSize.md, fontWeight: 'bold', color: Colors.text },
+  sectionLabel: { fontSize: FontSize.md, fontWeight: 'bold', color: Colors.text, marginBottom: 2 },
   description: { fontSize: FontSize.md, color: Colors.textSecondary, lineHeight: 22 },
-  sellerRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+
+  sellerCard: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+    backgroundColor: Colors.surface, borderRadius: BorderRadius.lg,
+    padding: Spacing.md, ...Shadow.small,
+  },
   sellerAvatar: { backgroundColor: Colors.primary },
   sellerAvatarLabel: { color: Colors.textOnPrimary, fontWeight: 'bold' },
-  sellerInfo: { gap: 4 },
-  sellerName: { fontSize: FontSize.lg, fontWeight: 'bold', color: Colors.text },
-  sellerRating: { fontSize: FontSize.sm, color: Colors.textSecondary },
-  sellerVerified: { fontSize: FontSize.sm, color: Colors.success },
+  sellerInfo: { flex: 1, gap: 3 },
+  sellerName: { fontSize: FontSize.md, fontWeight: 'bold', color: Colors.text },
+  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  ratingNum: { fontSize: FontSize.xs, color: Colors.textSecondary, marginLeft: 2 },
+  verifiedRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  sellerVerified: { fontSize: FontSize.xs, color: Colors.success, fontWeight: '600' },
+  sellerMessageBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: Colors.primary + '12', alignItems: 'center', justifyContent: 'center',
+  },
+
+  escrowBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    backgroundColor: Colors.primary + '0F', borderRadius: BorderRadius.md,
+    padding: Spacing.md, borderWidth: 1, borderColor: Colors.primary + '22',
+  },
+  escrowBadgeTitle: { fontSize: FontSize.sm, fontWeight: 'bold', color: Colors.primary },
+  escrowBadgeDesc: { fontSize: FontSize.xs, color: Colors.textSecondary, marginTop: 2, lineHeight: 16 },
+
   actionBar: {
     flexDirection: 'row', padding: Spacing.md, gap: Spacing.sm,
     backgroundColor: Colors.surface,
@@ -316,8 +398,8 @@ const styles = StyleSheet.create({
   buyButton: { flex: 2, backgroundColor: Colors.primary, borderRadius: BorderRadius.md },
   buttonContent: { height: 48 },
   buyButtonLabel: { fontWeight: 'bold' },
-  unavailableBox: { flex: 2, alignItems: 'center' },
-  unavailableText: { fontSize: FontSize.sm, color: Colors.textSecondary, textAlign: 'center' },
+  unavailableBox: { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs },
+  unavailableText: { fontSize: FontSize.sm, color: Colors.textSecondary },
   ownerBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     padding: Spacing.md, backgroundColor: Colors.surface,

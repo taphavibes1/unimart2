@@ -77,7 +77,7 @@ export default function RegisterScreen() {
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: 'images' as const,
       allowsEditing: true,
       aspect: [4, 3],
       quality: 0.75,
