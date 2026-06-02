@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Text, Button, ActivityIndicator } from 'react-native-paper';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
@@ -8,39 +8,41 @@ import Toast from 'react-native-toast-message';
 import { db } from '../lib/firebase';
 import { Colors, Spacing, FontSize, BorderRadius } from '../constants/theme';
 import { PAYMENT_STATUSES, LISTING_STATUSES } from '../constants';
+import { formatPrice } from '../lib/utils';
+
+type ScanState = 'scanning' | 'processing' | 'success';
 
 export default function ScanQRScreen() {
   const { paymentId } = useLocalSearchParams<{ paymentId: string }>();
   const router = useRouter();
   const [permission, requestPermission] = useCameraPermissions();
-  const [scanned, setScanned] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [scanState, setScanState] = useState<ScanState>('scanning');
+  const [releasedAmount, setReleasedAmount] = useState(0);
+  const [sellerName, setSellerName] = useState('');
 
   const handleBarCodeScanned = async ({ data }: { data: string }) => {
-    if (scanned || isProcessing) return;
-    setScanned(true);
-    setIsProcessing(true);
+    if (scanState !== 'scanning') return;
+    setScanState('processing');
 
     try {
       const scannedPaymentId = data.trim();
       if (!paymentId || scannedPaymentId !== paymentId) {
         Toast.show({ type: 'error', text1: 'Invalid QR Code', text2: 'This QR does not match your payment.' });
-        setScanned(false);
-        setIsProcessing(false);
+        setScanState('scanning');
         return;
       }
 
       const paymentSnap = await getDoc(doc(db, 'payments', paymentId));
       if (!paymentSnap.exists()) {
         Toast.show({ type: 'error', text1: 'Payment not found' });
-        setIsProcessing(false);
+        setScanState('scanning');
         return;
       }
 
       const payment = paymentSnap.data();
       if (payment.status !== PAYMENT_STATUSES.HELD) {
         Toast.show({ type: 'error', text1: 'Invalid payment status', text2: `Status: ${payment.status}` });
-        setIsProcessing(false);
+        setScanState('scanning');
         return;
       }
 
@@ -52,14 +54,13 @@ export default function ScanQRScreen() {
         status: LISTING_STATUSES.SOLD,
       });
 
-      Toast.show({ type: 'success', text1: 'Transaction Complete!', text2: 'Payment released to seller.' });
-      router.replace('/(tabs)/home');
+      setReleasedAmount(payment.amount ?? 0);
+      setSellerName(payment.sellerName ?? '');
+      setScanState('success');
     } catch (error) {
       console.error(error);
       Toast.show({ type: 'error', text1: 'Error', text2: 'Could not complete transaction.' });
-      setScanned(false);
-    } finally {
-      setIsProcessing(false);
+      setScanState('scanning');
     }
   };
 
@@ -80,9 +81,62 @@ export default function ScanQRScreen() {
     );
   }
 
+  if (scanState === 'success') {
+    return (
+      <>
+        <Stack.Screen options={{
+          title: 'Payment Released!',
+          headerStyle: { backgroundColor: Colors.success },
+          headerTintColor: '#fff',
+        }} />
+        <View style={styles.successContainer}>
+          <View style={styles.successCircle}>
+            <Text style={styles.successEmoji}>✅</Text>
+          </View>
+          <Text style={styles.successTitle}>Transaction Complete!</Text>
+          <Text style={styles.successSubtitle}>
+            {releasedAmount > 0
+              ? `${formatPrice(releasedAmount)} has been released to ${sellerName || 'the seller'}`
+              : 'Payment has been released to the seller'}
+          </Text>
+
+          <View style={styles.successCard}>
+            <View style={styles.successRow}>
+              <Text style={styles.successRowLabel}>Status</Text>
+              <Text style={styles.successRowValue}>✅ Complete</Text>
+            </View>
+            <View style={styles.successRow}>
+              <Text style={styles.successRowLabel}>Item</Text>
+              <Text style={styles.successRowValue}>Marked as Sold</Text>
+            </View>
+          </View>
+
+          <Text style={styles.successTip}>
+            🛡️ You're protected — funds were held in escrow until you approved
+          </Text>
+
+          <Button
+            mode="contained"
+            onPress={() => router.replace('/(tabs)/home')}
+            style={styles.homeButton}
+            contentStyle={styles.homeButtonContent}
+            labelStyle={styles.homeButtonLabel}
+            icon="home"
+          >
+            Back to Marketplace
+          </Button>
+        </View>
+      </>
+    );
+  }
+
   return (
     <>
-      <Stack.Screen options={{ title: 'Scan Seller QR Code', headerStyle: { backgroundColor: Colors.primary }, headerTintColor: Colors.textOnPrimary }} />
+      <Stack.Screen options={{
+        title: 'Scan Seller QR Code',
+        headerStyle: { backgroundColor: Colors.primary },
+        headerTintColor: Colors.textOnPrimary,
+      }} />
       <View style={styles.container}>
         <View style={styles.instructions}>
           <Text style={styles.instructionText}>
@@ -93,7 +147,7 @@ export default function ScanQRScreen() {
         <CameraView
           style={styles.camera}
           facing="back"
-          onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+          onBarcodeScanned={scanState === 'scanning' ? handleBarCodeScanned : undefined}
           barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         >
           <View style={styles.overlay}>
@@ -103,26 +157,20 @@ export default function ScanQRScreen() {
               <View style={[styles.corner, styles.bottomLeft]} />
               <View style={[styles.corner, styles.bottomRight]} />
             </View>
-            {isProcessing && (
+            {scanState === 'processing' && (
               <View style={styles.processingOverlay}>
                 <ActivityIndicator size="large" color="#fff" />
-                <Text style={styles.processingText}>Verifying payment...</Text>
+                <Text style={styles.processingText}>Verifying payment…</Text>
               </View>
             )}
           </View>
         </CameraView>
 
-        {scanned && !isProcessing && (
-          <View style={styles.rescanContainer}>
-            <Button
-              mode="contained"
-              onPress={() => setScanned(false)}
-              style={styles.rescanButton}
-            >
-              Scan Again
-            </Button>
-          </View>
-        )}
+        <View style={styles.footer}>
+          <Text style={styles.footerHint}>
+            🔒 Scanning releases funds from escrow to the seller
+          </Text>
+        </View>
       </View>
     </>
   );
@@ -134,6 +182,8 @@ const styles = StyleSheet.create({
   permissionEmoji: { fontSize: 56, marginBottom: Spacing.md },
   permissionTitle: { fontSize: FontSize.xl, fontWeight: 'bold', color: Colors.text, marginBottom: Spacing.sm },
   permissionText: { fontSize: FontSize.md, color: Colors.textSecondary, textAlign: 'center', marginBottom: Spacing.md },
+
+  // Scanner UI
   instructions: { backgroundColor: Colors.primary, padding: Spacing.md },
   instructionText: { fontSize: FontSize.sm, color: Colors.textOnPrimary, textAlign: 'center' },
   camera: { flex: 1 },
@@ -146,6 +196,35 @@ const styles = StyleSheet.create({
   bottomRight: { bottom: 0, right: 0, borderLeftWidth: 0, borderTopWidth: 0 },
   processingOverlay: { position: 'absolute', alignItems: 'center', gap: Spacing.md },
   processingText: { color: '#fff', fontSize: FontSize.md, fontWeight: '600' },
-  rescanContainer: { padding: Spacing.md, backgroundColor: Colors.surface },
-  rescanButton: { borderRadius: BorderRadius.lg, backgroundColor: Colors.primary },
+  footer: { backgroundColor: Colors.surface, padding: Spacing.md },
+  footerHint: { fontSize: FontSize.sm, color: Colors.textSecondary, textAlign: 'center' },
+
+  // Success state
+  successContainer: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    padding: Spacing.xl, backgroundColor: Colors.background, gap: Spacing.md,
+  },
+  successCircle: {
+    width: 110, height: 110, borderRadius: 55,
+    backgroundColor: '#E8F5E9', alignItems: 'center', justifyContent: 'center',
+    marginBottom: Spacing.sm,
+  },
+  successEmoji: { fontSize: 56 },
+  successTitle: { fontSize: FontSize.xxxl, fontWeight: 'bold', color: Colors.success, textAlign: 'center' },
+  successSubtitle: { fontSize: FontSize.md, color: Colors.textSecondary, textAlign: 'center', lineHeight: 22 },
+  successCard: {
+    width: '100%', backgroundColor: Colors.surface, borderRadius: BorderRadius.lg,
+    padding: Spacing.md, gap: Spacing.sm, marginVertical: Spacing.sm,
+  },
+  successRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  successRowLabel: { fontSize: FontSize.md, color: Colors.textSecondary },
+  successRowValue: { fontSize: FontSize.md, color: Colors.text, fontWeight: '600' },
+  successTip: {
+    fontSize: FontSize.sm, color: Colors.primary, textAlign: 'center',
+    backgroundColor: Colors.primary + '0F', borderRadius: BorderRadius.md,
+    padding: Spacing.md, lineHeight: 20, width: '100%',
+  },
+  homeButton: { width: '100%', borderRadius: BorderRadius.lg, backgroundColor: Colors.success, marginTop: Spacing.sm },
+  homeButtonContent: { height: 52 },
+  homeButtonLabel: { fontSize: FontSize.lg, fontWeight: 'bold' },
 });

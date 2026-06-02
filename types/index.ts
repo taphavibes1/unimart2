@@ -78,6 +78,7 @@ export interface Payment {
   totalAmount: number;
   paymentMethod: string;
   status: PaymentStatus;
+  sellerName?: string;
   receiptUrl?: string;
   createdAt: string;
   releasedAt?: string;

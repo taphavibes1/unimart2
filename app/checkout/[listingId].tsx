@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
 import { Text, Button, RadioButton, ActivityIndicator, Divider } from 'react-native-paper';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -83,22 +83,58 @@ export default function CheckoutScreen() {
         headerTintColor: Colors.textOnPrimary,
       }} />
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        {/* Order summary */}
+
+        {/* Item preview */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Order Summary</Text>
-          <View style={styles.orderRow}>
-            <Text style={styles.orderLabel} numberOfLines={2}>{listing.title}</Text>
-            <Text style={styles.orderValue}>{formatPrice(listing.price)}</Text>
+          <View style={styles.itemPreview}>
+            {listing.imageUrls?.[0] ? (
+              <Image source={{ uri: listing.imageUrls[0] }} style={styles.itemImage} />
+            ) : (
+              <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
+                <Text style={styles.itemImagePlaceholderText}>📦</Text>
+              </View>
+            )}
+            <View style={styles.itemInfo}>
+              <Text style={styles.itemTitle} numberOfLines={2}>{listing.title}</Text>
+              <View style={styles.sellerRow}>
+                <MaterialCommunityIcons name="account-circle-outline" size={14} color={Colors.textSecondary} />
+                <Text style={styles.sellerName} numberOfLines={1}>
+                  {listing.sellerName || 'Seller'}
+                </Text>
+                {listing.sellerRating && listing.sellerRating > 0 ? (
+                  <View style={styles.ratingBadge}>
+                    <MaterialCommunityIcons name="star" size={11} color={Colors.warning} />
+                    <Text style={styles.ratingText}>{listing.sellerRating.toFixed(1)}</Text>
+                  </View>
+                ) : null}
+              </View>
+            </View>
           </View>
-          <View style={styles.orderRow}>
-            <Text style={styles.orderLabel}>Platform fee (2%)</Text>
-            <Text style={styles.feeValue}>{formatPrice(fee)}</Text>
+
+          <View style={styles.priceBreakdown}>
+            <View style={styles.orderRow}>
+              <Text style={styles.orderLabel}>Item price</Text>
+              <Text style={styles.orderValue}>{formatPrice(listing.price)}</Text>
+            </View>
+            <View style={styles.orderRow}>
+              <Text style={styles.orderLabel}>Platform fee (2%)</Text>
+              <Text style={styles.feeValue}>{formatPrice(fee)}</Text>
+            </View>
+            <Divider style={styles.divider} />
+            <View style={styles.orderRow}>
+              <Text style={styles.totalLabel}>Total charged</Text>
+              <Text style={styles.totalValue}>{formatPrice(total)}</Text>
+            </View>
           </View>
-          <Divider style={styles.divider} />
-          <View style={styles.orderRow}>
-            <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalValue}>{formatPrice(total)}</Text>
-          </View>
+        </View>
+
+        {/* Escrow badge */}
+        <View style={styles.escrowBadge}>
+          <MaterialCommunityIcons name="shield-lock" size={20} color={Colors.primary} />
+          <Text style={styles.escrowBadgeText}>
+            Funds are locked in escrow until you receive & approve the item
+          </Text>
         </View>
 
         {/* Payment method */}
@@ -135,14 +171,14 @@ export default function CheckoutScreen() {
           </RadioButton.Group>
         </View>
 
-        {/* Escrow explanation */}
+        {/* How escrow works */}
         <View style={styles.escrowCard}>
           <Text style={styles.escrowTitle}>🔒 How Escrow Works</Text>
           {[
             'Tap "Hold Funds" — payment is locked in escrow',
             'Meet the seller at a safe campus zone',
             'Inspect the item before releasing payment',
-            'Scan seller\'s QR code to release funds',
+            "Scan seller's QR code to release funds",
             'Seller receives payment, item marked sold',
           ].map((step, i) => (
             <View key={i} style={styles.escrowStep}>
@@ -177,13 +213,42 @@ const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   card: { backgroundColor: Colors.surface, borderRadius: BorderRadius.lg, padding: Spacing.md, ...Shadow.small },
   cardTitle: { fontSize: FontSize.lg, fontWeight: 'bold', color: Colors.text, marginBottom: Spacing.md },
-  orderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: Spacing.xs, gap: Spacing.md },
-  orderLabel: { fontSize: FontSize.md, color: Colors.text, flex: 1 },
+
+  // Item preview
+  itemPreview: { flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.md },
+  itemImage: { width: 80, height: 80, borderRadius: BorderRadius.md, resizeMode: 'cover', flexShrink: 0 },
+  itemImagePlaceholder: { backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
+  itemImagePlaceholderText: { fontSize: 28 },
+  itemInfo: { flex: 1, justifyContent: 'center', gap: Spacing.xs },
+  itemTitle: { fontSize: FontSize.md, fontWeight: '600', color: Colors.text, lineHeight: 20 },
+  sellerRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  sellerName: { fontSize: FontSize.sm, color: Colors.textSecondary, flex: 1 },
+  ratingBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 2,
+    backgroundColor: '#FFF8E1', borderRadius: BorderRadius.round,
+    paddingHorizontal: 5, paddingVertical: 1,
+  },
+  ratingText: { fontSize: 10, color: Colors.warning, fontWeight: 'bold' },
+
+  // Price breakdown
+  priceBreakdown: { gap: 0 },
+  orderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: Spacing.xs },
+  orderLabel: { fontSize: FontSize.md, color: Colors.text },
   orderValue: { fontSize: FontSize.md, color: Colors.text, fontWeight: '600' },
   feeValue: { fontSize: FontSize.md, color: Colors.textSecondary },
   divider: { marginVertical: Spacing.sm },
   totalLabel: { fontSize: FontSize.lg, fontWeight: 'bold', color: Colors.text },
   totalValue: { fontSize: FontSize.xl, fontWeight: 'bold', color: Colors.primary },
+
+  // Escrow badge
+  escrowBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    backgroundColor: Colors.primary + '0F', borderRadius: BorderRadius.md,
+    padding: Spacing.md, borderWidth: 1, borderColor: Colors.primary + '22',
+  },
+  escrowBadgeText: { fontSize: FontSize.sm, color: Colors.primary, flex: 1, lineHeight: 18 },
+
+  // Payment method
   demoNotice: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.xs,
     backgroundColor: '#FFF8E1', borderRadius: BorderRadius.sm,
@@ -199,6 +264,8 @@ const styles = StyleSheet.create({
   methodSelected: { borderColor: Colors.primary, backgroundColor: Colors.primary + '0A' },
   methodLabel: { fontSize: FontSize.md, color: Colors.text, flex: 1 },
   methodLabelSelected: { color: Colors.primary, fontWeight: '600' },
+
+  // How escrow works
   escrowCard: { backgroundColor: '#E8EAF6', borderRadius: BorderRadius.lg, padding: Spacing.md, gap: Spacing.sm },
   escrowTitle: { fontSize: FontSize.md, fontWeight: 'bold', color: Colors.primary, marginBottom: Spacing.xs },
   escrowStep: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
@@ -208,6 +275,7 @@ const styles = StyleSheet.create({
   },
   escrowNumText: { fontSize: FontSize.xs, color: '#fff', fontWeight: 'bold' },
   escrowStepText: { fontSize: FontSize.sm, color: Colors.text, flex: 1, lineHeight: 20 },
+
   confirmButton: { borderRadius: BorderRadius.lg, backgroundColor: Colors.primary },
   confirmContent: { height: 56 },
   confirmLabel: { fontSize: FontSize.lg, fontWeight: 'bold' },
