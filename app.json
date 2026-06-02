@@ -59,9 +59,6 @@
         }
       ]
     ],
-    "scheme": "ugbowomarket",
-    "experiments": {
-      "typedRoutes": true
-    }
+    "scheme": "ugbowomarket"
   }
 }
